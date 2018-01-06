@@ -1,0 +1,14 @@
+I tried this, even built the step300 table out to 7-deep and 351,449,800 entries but the
+search just kept going.  I could have a bug in the state() of LookupTable444TsaiPhase0 but
+this is similar code from what I use for the phase2 state() so I feel pretty confident it
+is correct.  I think it is more that this search is just gigantic!!  There would be
+
+    UD centers  FB centers  LR center    EO
+    735,471 *   735,471 *   51,482,970 * 2,704,156
+
+or 75,305,455,685,201,401,471,932,120 combinations!!
+
+51,482,970/75,305,455,685,201,401,471,932,120 = 0.000 000 000 000 000 000 6837
+
+so yeah, that isn't really feasible in python
+
