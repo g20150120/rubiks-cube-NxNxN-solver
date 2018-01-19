@@ -1,31 +1,13 @@
 #!/usr/bin/env python3
 
-from copy import copy
 from rubikscubennnsolver import RubiksCube
-from rubikscubennnsolver.RubiksSide import SolveError
-from rubikscubennnsolver.RubiksCube444Misc import (
-    lookup_table_444_last_two_edges_place_F_east,
-    lookup_table_444_sister_wing_to_F_east,
-    lookup_table_444_sister_wing_to_U_west,
-    tsai_phase2_orient_edges_444,
-    tsai_edge_mapping_combinations,
-)
 from rubikscubennnsolver.LookupTable import (
     get_characters_common_count,
-    get_best_entry,
-    rotations_24,
-    stage_first_four_edges_wing_str_combos,
-    wing_strs_all,
+    steps_on_same_face_and_layer,
     LookupTable,
     LookupTableIDA,
-    LookupTableAStar,
-    NoSteps,
-    NoIDASolution,
 )
-from rubikscubennnsolver.rotate_xxx import rotate_444
-from subprocess import check_output
 from pprint import pformat
-import itertools
 import logging
 import sys
 
@@ -38,10 +20,15 @@ moves_4x4x4 = ("U", "U'", "U2", "Uw", "Uw'", "Uw2",
                "R" , "R'", "R2", "Rw", "Rw'", "Rw2",
                "B" , "B'", "B2", "Bw", "Bw'", "Bw2",
                "D" , "D'", "D2", "Dw", "Dw'", "Dw2")
+
 solved_4x4x4 = 'UUUUUUUUUUUUUUUURRRRRRRRRRRRRRRRFFFFFFFFFFFFFFFFDDDDDDDDDDDDDDDDLLLLLLLLLLLLLLLLBBBBBBBBBBBBBBBB'
+
 centers_444 = (6, 7, 10, 11, 22, 23, 26, 27, 38, 39, 42, 43, 54, 55, 58, 59, 70, 71, 74, 75, 86, 87, 90, 91)
+
 UD_centers_444 = (6, 7, 10, 11, 86, 87, 90, 91)
+
 LR_centers_444 = (22, 23, 26, 27, 54, 55, 58, 59)
+
 edges_444 = (
     2, 3, 5, 8, 9, 12, 14, 15,      # Upper
     18, 19, 21, 24, 25, 28, 30, 31, # Left
@@ -64,6 +51,59 @@ wings_444 = (
     88, 92,
     94, 95
 )
+
+centers_solved_states_444 = set()
+centers_solved_states_444.add('UUUULLLLFFFFRRRRBBBBDDDD')
+centers_solved_states_444.add('UUUUFFFFRRRRBBBBLLLLDDDD')
+centers_solved_states_444.add('UUUURRRRBBBBLLLLFFFFDDDD')
+centers_solved_states_444.add('UUUUBBBBLLLLFFFFRRRRDDDD')
+centers_solved_states_444.add('DDDDLLLLBBBBRRRRFFFFUUUU')
+centers_solved_states_444.add('DDDDBBBBRRRRFFFFLLLLUUUU')
+centers_solved_states_444.add('DDDDRRRRFFFFLLLLBBBBUUUU')
+centers_solved_states_444.add('DDDDFFFFLLLLBBBBRRRRUUUU')
+centers_solved_states_444.add('LLLLUUUUBBBBDDDDFFFFRRRR')
+centers_solved_states_444.add('LLLLBBBBDDDDFFFFUUUURRRR')
+centers_solved_states_444.add('LLLLDDDDFFFFUUUUBBBBRRRR')
+centers_solved_states_444.add('LLLLFFFFUUUUBBBBDDDDRRRR')
+centers_solved_states_444.add('FFFFLLLLDDDDRRRRUUUUBBBB')
+centers_solved_states_444.add('FFFFDDDDRRRRUUUULLLLBBBB')
+centers_solved_states_444.add('FFFFRRRRUUUULLLLDDDDBBBB')
+centers_solved_states_444.add('FFFFUUUULLLLDDDDRRRRBBBB')
+centers_solved_states_444.add('RRRRDDDDBBBBUUUUFFFFLLLL')
+centers_solved_states_444.add('RRRRBBBBUUUUFFFFDDDDLLLL')
+centers_solved_states_444.add('RRRRUUUUFFFFDDDDBBBBLLLL')
+centers_solved_states_444.add('RRRRFFFFDDDDBBBBUUUULLLL')
+centers_solved_states_444.add('BBBBUUUURRRRDDDDLLLLFFFF')
+centers_solved_states_444.add('BBBBRRRRDDDDLLLLUUUUFFFF')
+centers_solved_states_444.add('BBBBDDDDLLLLUUUURRRRFFFF')
+centers_solved_states_444.add('BBBBLLLLUUUURRRRDDDDFFFF')
+
+def centers_solved_444(state):
+    if state[0:24] in centers_solved_states_444:
+        return True
+    return False
+
+
+
+def get_best_entry(foo):
+    # TODO this can only track wings since it is only used by 4x4x4
+    best_entry = None
+    best_paired_edges = None
+    best_paired_wings = None
+    best_steps_len = None
+
+    for (paired_edges, paired_wings, steps_len, state) in foo:
+        if (best_entry is None or
+            paired_edges > best_paired_edges or
+            (paired_edges == best_paired_edges and paired_wings > best_paired_wings) or
+            (paired_edges == best_paired_edges and paired_wings == best_paired_wings and steps_len < best_steps_len)):
+
+            best_entry = (paired_edges, paired_wings, steps_len, state)
+            best_paired_edges = paired_edges
+            best_paired_wings = paired_wings
+            best_steps_len = steps_len
+    return best_entry
+
 
 def get_edges_paired_binary_signature(state):
     """
@@ -343,302 +383,174 @@ class LookupTable444ULFRBDCentersSolve(LookupTable):
         return result
 
 
-class LookupTable444TsaiPhase1(LookupTable):
-    """
-    lookup-table-4x4x4-step50-tsai-phase1.txt
-    =========================================
-    1 steps has 5 entries (0 percent, 0.00x previous step)
-    2 steps has 82 entries (0 percent, 16.40x previous step)
-    3 steps has 1,206 entries (0 percent, 14.71x previous step)
-    4 steps has 14,116 entries (1 percent, 11.70x previous step)
-    5 steps has 123,404 entries (16 percent, 8.74x previous step)
-    6 steps has 422,508 entries (57 percent, 3.42x previous step)
-    7 steps has 173,254 entries (23 percent, 0.41x previous step)
-    8 steps has 896 entries (0 percent, 0.01x previous step)
-
-    Total: 735,471 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step50-tsai-phase1.txt',
-            '0f0f00',
-            linecount=735471)
-
-    def state(self):
-        parent_state = self.parent.state
-        result = ''.join(['1' if parent_state[x] in ('L', 'R') else '0' for x in centers_444])
-
-        # Convert to hex
-        return self.hex_format % int(result, 2)
-
-
-class LookupTable444TsaiPhase2Centers(LookupTable):
-    """
-    lookup-table-4x4x4-step61-centers.txt
-    =====================================
-    1 steps has 34 entries (0 percent, 0.00x previous step)
-    2 steps has 194 entries (0 percent, 5.71x previous step)
-    3 steps has 1,716 entries (0 percent, 8.85x previous step)
-    4 steps has 12,206 entries (1 percent, 7.11x previous step)
-    5 steps has 68,428 entries (7 percent, 5.61x previous step)
-    6 steps has 247,370 entries (27 percent, 3.62x previous step)
-    7 steps has 434,332 entries (48 percent, 1.76x previous step)
-    8 steps has 135,034 entries (14 percent, 0.31x previous step)
-    9 steps has 1,586 entries (0 percent, 0.01x previous step)
-
-    Total: 900,900 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step61-tsai-phase2-centers.txt',
-            ('UUUULLLLFFFFRRRRFFFFUUUU',
-             'UUUURRRRFFFFLLLLFFFFUUUU',
-             'UUUULLRRFFFFRRLLFFFFUUUU',
-             'UUUULLRRFFFFLLRRFFFFUUUU',
-             'UUUURRLLFFFFRRLLFFFFUUUU',
-             'UUUURRLLFFFFLLRRFFFFUUUU',
-             'UUUURLRLFFFFRLRLFFFFUUUU',
-             'UUUURLRLFFFFLRLRFFFFUUUU',
-             'UUUULRLRFFFFRLRLFFFFUUUU',
-             'UUUULRLRFFFFLRLRFFFFUUUU',
-             'UUUURLLRFFFFLRRLFFFFUUUU',
-             'UUUULRRLFFFFRLLRFFFFUUUU'),
-            linecount=900900)
-
-    def state(self):
-        parent_state = self.parent.state
-        result = []
-
-        for index in centers_444:
-            x = parent_state[index]
-
-            if x in ('L', 'F', 'R', 'U'):
-                result.append(x)
-            elif x == 'B':
-                result.append('F')
-            elif x == 'D':
-                result.append('U')
-
-        result = ''.join(result)
-        return result
-
-
-tsai_phase2_LR_center_targets = set((
-    'LLLLRRRR',
-    'RRRRLLLL',
-    'LLRRRRLL',
-    'LLRRLLRR',
-    'RRLLRRLL',
-    'RRLLLLRR',
-    'RLRLRLRL',
-    'RLRLLRLR',
-    'LRLRRLRL',
-    'LRLRLRLR',
-    'RLLRLRRL',
-    'LRRLRLLR'))
-
-class LookupTableIDA444TsaiPhase2(LookupTableIDA):
+class LookupTable444ULFRBDCentersSolveEdgesStage(LookupTableIDA):
 
     def __init__(self, parent):
         LookupTableIDA.__init__(
             self,
             parent,
             'lookup-table-4x4x4-step60-tsai-phase2-dummy.txt',
-            '111111111111_10425376a8b9ecfdhgkiljnm',
+            'TBD',
             moves_4x4x4,
-            ("Fw", "Fw'", "Bw", "Bw'",
-             "Uw", "Uw'", "Dw", "Dw'", # illegal_moves
-             "Bw2", "Dw2", "Lw", "Lw'", "Lw2"), # TPR also restricts these
+            ("Rw", "Rw'", "Lw", "Lw'",
+             "Fw", "Fw'", "Bw", "Bw'",
+             "Uw", "Uw'", "Dw", "Dw'"),
 
             # prune tables
-            (parent.lt_tsai_phase2_centers,),
+            (parent.lt_ULFRBD_centers_solve,),
             linecount=0)
 
     def state(self):
-        babel = {
-            'L' : 'L',
-            'F' : 'F',
-            'R' : 'R',
-            'B' : 'F',
-            'D' : 'U',
-            'U' : 'U',
-        }
-        parent_state = self.parent.state
+        state = edges_recolor_pattern_444(self.parent.state[:])
 
-        result = [
-            # Upper
-            parent_state[2], parent_state[3],
-            parent_state[5], babel[parent_state[6]], babel[parent_state[7]], parent_state[8],
-            parent_state[9], babel[parent_state[10]], babel[parent_state[11]], parent_state[12],
-            parent_state[14], parent_state[15],
+        edges = ''.join([state[square_index] for square_index in wings_444])
+        centers = ''.join([state[x] for x in centers_444])
 
-            # Left
-            parent_state[18], parent_state[19],
-            parent_state[21], babel[parent_state[22]], babel[parent_state[23]], parent_state[24],
-            parent_state[25], babel[parent_state[26]], babel[parent_state[27]], parent_state[28],
-            parent_state[30], parent_state[31],
-
-            # Front
-            parent_state[34], parent_state[35],
-            parent_state[37], babel[parent_state[38]], babel[parent_state[39]], parent_state[40],
-            parent_state[41], babel[parent_state[42]], babel[parent_state[43]], parent_state[44],
-            parent_state[46], parent_state[47],
-
-            # Right
-            parent_state[50], parent_state[51],
-            parent_state[53], babel[parent_state[54]], babel[parent_state[55]], parent_state[56],
-            parent_state[57], babel[parent_state[58]], babel[parent_state[59]], parent_state[60],
-            parent_state[62], parent_state[63],
-
-            # Back
-            parent_state[66], parent_state[67],
-            parent_state[69], babel[parent_state[70]], babel[parent_state[71]], parent_state[72],
-            parent_state[73], babel[parent_state[74]], babel[parent_state[75]], parent_state[76],
-            parent_state[78], parent_state[79],
-
-            # Down
-            parent_state[82], parent_state[83],
-            parent_state[85], babel[parent_state[86]], babel[parent_state[87]], parent_state[88],
-            parent_state[89], babel[parent_state[90]], babel[parent_state[91]], parent_state[92],
-            parent_state[94], parent_state[95],
-        ]
-
-        result = ''.join(result)
-        return result
+        return centers + edges
 
     def search_complete(self, state, steps_to_here):
-        parent_state = self.parent.state
 
-        # Are UD and FB staged? Check UD, if it is staged FB has to be staged too.
-        for x in UD_centers_444:
-            if parent_state[x] not in ('U', 'D'):
-                return False
+        if centers_solved_444(state) and self.parent.solve_all_edges_444(use_bfs=False, apply_steps_if_found=False):
 
-        # Are the LR sides in 1 of the 12 states we want?
-        LR_centers = [parent_state[x] for x in LR_centers_444]
-        LR_centers = ''.join(LR_centers)
+            # rotate_xxx() is very fast but it does not append the
+            # steps to the solution so put the cube back in original state
+            # and execute the steps via a normal rotate() call
+            self.parent.state = self.original_state[:]
+            self.parent.solution = self.original_solution[:]
 
-        if LR_centers not in tsai_phase2_LR_center_targets:
-            return False
+            for step in steps_to_here:
+                self.parent.rotate(step)
 
-        # If we are here then our centers are all good...check the edges.
-        # If the edges are not in lt_tsai_phase3_edges_solve it may throw a KeyError
-        try:
-            if self.parent.lt_tsai_phase3_edges_solve.steps() is not None and self.parent.edge_swaps_even(False, None, False):
-
-                #log.warning("phase3_edges state %s, steps %s" % (
-                #    self.parent.lt_tsai_phase3_edges_solve.state(),
-                #    ' '.join(self.parent.lt_tsai_phase3_edges_solve.steps())))
-
-                # rotate_xxx() is very fast but it does not append the
-                # steps to the solution so put the cube back in original state
-                # and execute the steps via a normal rotate() call
+            '''
+            if self.avoid_oll and self.parent.center_solution_leads_to_oll_parity():
                 self.parent.state = self.original_state[:]
                 self.parent.solution = self.original_solution[:]
+                log.info("%s: IDA found match but it leads to OLL" % self)
+                return False
 
-                for step in steps_to_here:
-                    self.parent.rotate(step)
+            if self.avoid_pll and self.parent.edge_solution_leads_to_pll_parity():
+                self.parent.state = self.original_state[:]
+                self.parent.solution = self.original_solution[:]
+                log.info("%s: IDA found match but it leads to PLL" % self)
+                return False
+            '''
 
-                return True
-
-        except KeyError:
-            pass
+            return True
 
         return False
 
 
-symmetry_rotations_tsai_phase3_444 =\
-    ("",
-     "y y",
-     "x",
-     "x y y",
-     "x'",
-     "x' y y",
-     "x x",
-     "x x y y",
-     "reflect-x",
-     "reflect-x y y",
-     "reflect-x x",
-     "reflect-x x y y",
-     "reflect-x x'",
-     "reflect-x x' y y",
-     "reflect-x x x",
-     "reflect-x x x y y")
 
-# 12-23 are high edges, make these U (1)
-# 0-11 are low edges, make these D (6)
-# https://github.com/cs0x7f/TPR-4x4x4-Solver/blob/master/src/FullCube.java
-high_edges_444 = ((14, 2, 67),  # upper
-                  (13, 9, 19),
-                  (15, 8, 51),
-                  (12, 15, 35),
-                  (21, 25, 76), # left
-                  (20, 24, 37),
-                  (23, 57, 44), # right
-                  (22, 56, 69),
-                  (18, 82, 46), # down
-                  (17, 89, 30),
-                  (19, 88, 62),
-                  (16, 95, 78))
+"""
+lookup-table-4x4x4-step201-UD-centers-solve.txt
+lookup-table-4x4x4-step202-LR-centers-solve.txt
+lookup-table-4x4x4-step203-FB-centers-solve.txt
+===============================================
+1 steps has 7 entries (0 percent, 0.00x previous step)
+2 steps has 84 entries (0 percent, 12.00x previous step)
+3 steps has 1118 entries (0 percent, 13.31x previous step)
+4 steps has 14208 entries (0 percent, 12.71x previous step)
+5 steps has 163085 entries (0 percent, 11.48x previous step)
+6 steps has 1586257 entries (3 percent, 9.73x previous step)
+7 steps has 10286840 entries (19 percent, 6.48x previous step)
+8 steps has 26985405 entries (52 percent, 2.62x previous step)
+9 steps has 12258437 entries (23 percent, 0.45x previous step)
+10 steps has 187529 entries (0 percent, 0.02x previous step)
 
+Total: 51482970 entries
+Average: 7.973232 moves
+"""
+class LookupTable444UDCentersSolveUnstaged(LookupTable):
 
-low_edges_444 = ((2, 3, 66),  # upper
-                 (1, 5, 18),
-                 (3, 12, 50),
-                 (0, 14, 34),
-                 (9, 21, 72), # left
-                 (8, 28, 41),
-                 (11, 53, 40), # right
-                 (10, 60, 73),
-                 (6, 83, 47), # down
-                 (5, 85, 31),
-                 (7, 92, 63),
-                 (4, 94, 79))
+    def __init__(self, parent):
+
+        LookupTable.__init__(
+            self,
+            parent,
+            'lookup-table-4x4x4-step201-UD-centers-solve.txt',
+            'UUUUxxxxxxxxxxxxxxxxDDDD',
+            linecount=51482970)
+
+    def state(self):
+        parent_state = self.parent.state
+        result = ''.join([parent_state[x] if parent_state[x] in ('U', 'D') else 'x' for x in centers_444])
+        return result
 
 
-def edges_high_low_recolor_444(state):
+class LookupTable444LRCentersSolveUnstaged(LookupTable):
+
+    def __init__(self, parent):
+
+        LookupTable.__init__(
+            self,
+            parent,
+            'lookup-table-4x4x4-step202-LR-centers-solve.txt',
+            'xxxxLLLLxxxxRRRRxxxxxxxx',
+            linecount=51482970)
+
+    def state(self):
+        parent_state = self.parent.state
+        result = ''.join([parent_state[x] if parent_state[x] in ('L', 'R') else 'x' for x in centers_444])
+        return result
+
+
+class LookupTable444FBCentersSolveUnstaged(LookupTable):
+
+    def __init__(self, parent):
+
+        LookupTable.__init__(
+            self,
+            parent,
+            'lookup-table-4x4x4-step203-FB-centers-solve.txt',
+            'xxxxxxxxFFFFxxxxBBBBxxxx',
+            linecount=51482970)
+
+    def state(self):
+        parent_state = self.parent.state
+        result = ''.join([parent_state[x] if parent_state[x] in ('F', 'B') else 'x' for x in centers_444])
+        return result
+
+
+class LookupTableIDA444ULFRBDCentersSolveUnstaged(LookupTableIDA):
     """
-    Look at all of the high edges and find the low edge for each.
-    Return a string that represents where all the low edge siblings live in relation to their high edge counterpart.
+    lookup-table-4x4x4-step200-ULFRBD-centers-solve-unstaged.txt
+    ============================================================
+    1 steps has 10 entries (0 percent, 0.00x previous step)
+    2 steps has 162 entries (0 percent, 16.20x previous step)
+    3 steps has 2,427 entries (0 percent, 14.98x previous step)
+    4 steps has 35,830 entries (0 percent, 14.76x previous step)
+    5 steps has 527,561 entries (0 percent, 14.72x previous step)
+    6 steps has 7,683,218 entries (6 percent, 14.56x previous step)
+    7 steps has 111,158,950 entries (93 percent, 14.47x previous step)
+
+    Total: 119,408,158 entries
+    Average: 6.925831 moves
     """
-    #assert len(state) == 97, "Invalid state %s, len is %d" % (state, len(state))
-    low_edge_map = {}
 
-    for (low_edge_index, square_index, partner_index) in low_edges_444:
-        square_value = state[square_index]
-        partner_value = state[partner_index]
-        #assert square_value != partner_value, "both squares are %s" % square_value
-        wing_str = ''.join(sorted([square_value, partner_value]))
-        low_edge_index = str(hex(low_edge_index))[2:]
-        state[square_index] = low_edge_index
-        state[partner_index] = low_edge_index
+    def __init__(self, parent):
+        LookupTableIDA.__init__(
+            self,
+            parent,
+            'lookup-table-4x4x4-step200-ULFRBD-centers-solve-unstaged.txt',
+            'UUUULLLLFFFFRRRRBBBBDDDD',
+            moves_4x4x4,
 
-        #assert wing_str not in low_edge_map, "We have two %s wings, one at high_index %s %s and one at high_index %s (%d, %d), state %s" %\
-        #    (wing_str,
-        #     low_edge_map[wing_str],
-        #     pformat(low_edges_444[int(low_edge_map[wing_str])]),
-        #     low_edge_index,
-        #     square_index, partner_index,
-        #     ''.join(state[1:]))
+            # illegal_moves...ignoring these increases the average solution
+            # a little but makes the IDA search much faster
+            ("Lw", "Lw'", "Lw2",
+             "Bw", "Bw'", "Bw2",
+             "Dw", "Dw'", "Dw2"),
 
-        # save low_edge_index in hex and chop the leading 0x via [2:]
-        low_edge_map[wing_str] = low_edge_index
+            # prune tables
+            (parent.lt_UD_centers_solve_unstaged,
+             parent.lt_LR_centers_solve_unstaged,
+             parent.lt_FB_centers_solve_unstaged),
+            linecount=119408158)
 
-    #assert len(low_edge_map.keys()) == 12, "Invalid low_edge_map\n%s\n" % pformat(low_edge_map)
-
-    for (high_edge_index, square_index, partner_index) in high_edges_444:
-        square_value = state[square_index]
-        partner_value = state[partner_index]
-        wing_str = ''.join(sorted([square_value, partner_value]))
-        state[square_index] = low_edge_map[wing_str]
-        state[partner_index] = low_edge_map[wing_str]
-    return state
+    def state(self):
+        parent_state = self.parent.state
+        result = ''.join([parent_state[x] for x in centers_444])
+        return result
 
 
 wings_for_edges_recolor_pattern_444 = (
@@ -669,19 +581,6 @@ wings_for_edges_recolor_pattern_444 = (
     ('l', 92, 63),
     ('m', 94, 79),
     ('n', 95, 78))
-
-
-LR_edges_recolor_tuples_444 = (
-    ('8', 21, 72), # left
-    ('9', 24, 37),
-    ('a', 25, 76),
-    ('b', 28, 41),
-
-    ('c', 53, 40), # right
-    ('d', 56, 69),
-    ('e', 57, 44),
-    ('f', 60, 73),
-)
 
 
 def edges_recolor_pattern_444(state):
@@ -724,335 +623,10 @@ def edges_recolor_pattern_444(state):
     return ''.join(state)
 
 
-def LR_edges_recolor_pattern_444(state):
-    edge_map = {
-        'BD': [],
-        'BL': [],
-        'BR': [],
-        'BU': [],
-        'DF': [],
-        'DL': [],
-        'DR': [],
-        'FL': [],
-        'FR': [],
-        'FU': [],
-        'LU': [],
-        'RU': []
-    }
-
-    # Record the two edge_indexes for each of the 12 edges
-    for (edge_index, square_index, partner_index) in LR_edges_recolor_tuples_444:
-        square_value = state[square_index]
-        partner_value = state[partner_index]
-        wing_str = ''.join(sorted([square_value, partner_value]))
-        edge_map[wing_str].append(edge_index)
-
-    # Where is the other wing_str like us?
-    for (edge_index, square_index, partner_index) in LR_edges_recolor_tuples_444:
-        square_value = state[square_index]
-        partner_value = state[partner_index]
-        wing_str = ''.join(sorted([square_value, partner_value]))
-
-        for tmp_index in edge_map[wing_str]:
-            if tmp_index != edge_index:
-                state[square_index] = tmp_index
-                state[partner_index] = tmp_index
-                break
-        else:
-            raise Exception("could not find tmp_index")
-
-    return ''.join(state)
-
-
-
-def reflect_x_444(cube):
-    return [cube[0],
-           cube[93], cube[94], cube[95], cube[96],
-           cube[89], cube[90], cube[91], cube[92],
-           cube[85], cube[86], cube[87], cube[88],
-           cube[81], cube[82], cube[83], cube[84],
-           cube[29], cube[30], cube[31], cube[32],
-           cube[25], cube[26], cube[27], cube[28],
-           cube[21], cube[22], cube[23], cube[24],
-           cube[17], cube[18], cube[19], cube[20],
-           cube[45], cube[46], cube[47], cube[48],
-           cube[41], cube[42], cube[43], cube[44],
-           cube[37], cube[38], cube[39], cube[40],
-           cube[33], cube[34], cube[35], cube[36],
-           cube[61], cube[62], cube[63], cube[64],
-           cube[57], cube[58], cube[59], cube[60],
-           cube[53], cube[54], cube[55], cube[56],
-           cube[49], cube[50], cube[51], cube[52],
-           cube[77], cube[78], cube[79], cube[80],
-           cube[73], cube[74], cube[75], cube[76],
-           cube[69], cube[70], cube[71], cube[72],
-           cube[65], cube[66], cube[67], cube[68],
-           cube[13], cube[14], cube[15], cube[16],
-           cube[9], cube[10], cube[11], cube[12],
-           cube[5], cube[6], cube[7], cube[8],
-           cube[1], cube[2], cube[3], cube[4]]
-
-
-class LookupTable444TsaiPhase3Edges(LookupTable):
-    """
-    lookup-table-4x4x4-step71-tsai-phase3-edges.txt
-    - without symmetry
-    - we use the copy with symmetry I just left this here for the history
-    ===============================================
-    1 steps has 4 entries (0 percent, 0.00x previous step)
-    2 steps has 20 entries (0 percent, 5.00x previous step)
-    3 steps has 140 entries (0 percent, 7.00x previous step)
-    4 steps has 1,141 entries (0 percent, 8.15x previous step)
-    5 steps has 8,059 entries (0 percent, 7.06x previous step)
-    6 steps has 62,188 entries (0 percent, 7.72x previous step)
-    7 steps has 442,293 entries (0 percent, 7.11x previous step)
-    8 steps has 2,958,583 entries (1 percent, 6.69x previous step)
-    9 steps has 17,286,512 entries (7 percent, 5.84x previous step)
-    10 steps has 69,004,356 entries (28 percent, 3.99x previous step)
-    11 steps has 122,416,936 entries (51 percent, 1.77x previous step)
-    12 steps has 27,298,296 entries (11 percent, 0.22x previous step)
-    13 steps has 22,272 entries (0 percent, 0.00x previous step)
-
-    Total: 239,500,800 entries
-
-
-    lookup-table-4x4x4-step71-tsai-phase3-edges.txt
-    - with symmetry
-    ===============================================
-    1 steps has 3 entries (0 percent, 0.00x previous step)
-    2 steps has 7 entries (0 percent, 2.33x previous step)
-    3 steps has 24 entries (0 percent, 3.43x previous step)
-    4 steps has 103 entries (0 percent, 4.29x previous step)
-    5 steps has 619 entries (0 percent, 6.01x previous step)
-    6 steps has 4,287 entries (0 percent, 6.93x previous step)
-    7 steps has 28,697 entries (0 percent, 6.69x previous step)
-    8 steps has 187,493 entries (1 percent, 6.53x previous step)
-    9 steps has 1,087,267 entries (7 percent, 5.80x previous step)
-    10 steps has 4,323,558 entries (28 percent, 3.98x previous step)
-    11 steps has 7,657,009 entries (51 percent, 1.77x previous step)
-    12 steps has 1,708,625 entries (11 percent, 0.22x previous step)
-    13 steps has 1,448 entries (0 percent, 0.00x previous step)
-
-    Total: 14,999,140 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step71-tsai-phase3-edges.txt',
-            '213098ba6574',
-            linecount=14999140)
-
-    def state(self):
-        parent_state = self.parent.state
-        original_state = list('x' + ''.join(parent_state[1:]))
-        results = []
-
-        for seq in symmetry_rotations_tsai_phase3_444:
-            state = original_state[:]
-
-            for step in seq.split():
-                if step == 'reflect-x':
-                    state = reflect_x_444(state[:])
-                else:
-                    state = rotate_444(state[:], step)
-
-            state = edges_high_low_recolor_444(state[:])
-
-            # record the state of all edges
-            state = ''.join(state)
-            state = ''.join((state[2],   state[9],  state[8],  state[15],
-                             state[25], state[24],
-                             state[57], state[56],
-                             state[82], state[89], state[88], state[95]))
-            results.append(state[:])
-
-        results = sorted(results)
-        return results[0]
-
-
-class LookupTable444TsaiPhase3CentersSolve(LookupTable):
-    """
-    lookup-table-4x4x4-step72-tsai-phase3-centers.txt
-    =================================================
-    1 steps has 4 entries (0 percent, 0.00x previous step)
-    2 steps has 34 entries (0 percent, 8.50x previous step)
-    3 steps has 247 entries (0 percent, 7.26x previous step)
-    4 steps has 1,282 entries (2 percent, 5.19x previous step)
-    5 steps has 4,844 entries (8 percent, 3.78x previous step)
-    6 steps has 11,821 entries (20 percent, 2.44x previous step)
-    7 steps has 17,486 entries (29 percent, 1.48x previous step)
-    8 steps has 15,121 entries (25 percent, 0.86x previous step)
-    9 steps has 6,889 entries (11 percent, 0.46x previous step)
-    10 steps has 1,063 entries (1 percent, 0.15x previous step)
-    11 steps has 9 entries (0 percent, 0.01x previous step)
-
-    Total: 58,800 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step72-tsai-phase3-centers.txt',
-            'UUUULLLLFFFFRRRRBBBBDDDD',
-            linecount=58800)
-
-    def state(self):
-        parent_state = self.parent.state
-
-        result = [
-            # Upper
-            parent_state[6],
-            parent_state[7],
-            parent_state[10],
-            parent_state[11],
-
-            # Left
-            parent_state[22],
-            parent_state[23],
-            parent_state[26],
-            parent_state[27],
-
-            # Front
-            parent_state[38],
-            parent_state[39],
-            parent_state[42],
-            parent_state[43],
-
-            # Right
-            parent_state[54],
-            parent_state[55],
-            parent_state[58],
-            parent_state[59],
-
-            # Back
-            parent_state[70],
-            parent_state[71],
-            parent_state[74],
-            parent_state[75],
-
-            # Down
-            parent_state[86],
-            parent_state[87],
-            parent_state[90],
-            parent_state[91]
-        ]
-
-        result = ''.join(result)
-        return result
-
-
-class LookupTableIDA444TsaiPhase3(LookupTableIDA):
-    """
-    lookup-table-4x4x4-step70-tsai-phase3.txt
-    ==========================================
-    1 steps has 4 entries (0 percent, 0.00x previous step)
-    2 steps has 34 entries (0 percent, 8.50x previous step)
-    3 steps has 371 entries (0 percent, 10.91x previous step)
-    4 steps has 3,834 entries (0 percent, 10.33x previous step)
-    5 steps has 38,705 entries (0 percent, 10.10x previous step)
-    6 steps has 385,795 entries (8 percent, 9.97x previous step)
-    7 steps has 3,884,999 entries (90 percent, 10.07x previous step)
-
-    Total: 4,313,742 entries
-    """
-
-    def __init__(self, parent):
-        LookupTableIDA.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step70-tsai-phase3.txt',
-            'UUUULLLLFFFFRRRRBBBBDDDD10425376a8b9ecfdhgkiljnm',
-            moves_4x4x4,
-
-            # illegal moves
-            ("Fw", "Fw'",
-             "Uw", "Uw'",
-             "Rw", "Rw'",
-             "Lw", "Lw'", "Lw2",
-             "Bw", "Bw'", "Bw2",
-             "Dw", "Dw'", "Dw2",
-             "R", "R'",
-             "L", "L'"),
-
-            # prune tables
-            (parent.lt_tsai_phase3_edges_solve,
-             parent.lt_tsai_phase3_centers_solve),
-            linecount=4313742)
-
-    def state(self):
-        state = edges_recolor_pattern_444(self.parent.state[:])
-        centers_state = ''.join([state[square_index] for square_index in centers_444])
-        edges_state = ''.join([state[square_index] for square_index in wings_444])
-        return centers_state + edges_state
-
-
-class LookupTable444EdgesSliceForward(LookupTable):
-    """
-    22*20*18 is 7920
-
-    lookup-table-4x4x4-step80-edges-slice-forward.txt
-    =================================================
-    1 steps has 7 entries (0 percent)
-    2 steps has 42 entries (0 percent)
-    3 steps has 299 entries (3 percent)
-    4 steps has 1,306 entries (16 percent)
-    5 steps has 3,449 entries (43 percent)
-    6 steps has 2,617 entries (33 percent)
-    7 steps has 200 entries (2 percent)
-
-    Total: 7,920 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step80-edges-slice-forward.txt',
-            'EDGES',
-            linecount=7920)
-
-    def state(self):
-        raise Exception("This should never be called")
-
-
-class LookupTable444EdgesSliceBackward(LookupTable):
-    """
-    22*20*18 is 7920
-    No idea why I am one entry short (should be 7920 total)...oh well
-
-    lookup-table-4x4x4-step90-edges-slice-backward.txt
-    ==================================================
-    1 steps has 1 entries (0 percent)
-    3 steps has 36 entries (0 percent)
-    4 steps has 66 entries (0 percent)
-    5 steps has 334 entries (4 percent)
-    6 steps has 1,369 entries (17 percent)
-    7 steps has 3,505 entries (44 percent)
-    8 steps has 2,539 entries (32 percent)
-    9 steps has 69 entries (0 percent)
-
-    Total: 7,919 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step90-edges-slice-backward.txt',
-            'EDGES',
-            linecount=7919)
-
-    def state(self):
-        raise Exception("This should never be called")
-
-
 class LookupTable444Edges(LookupTable):
     """
-    lookup-table-4x4x4-step100-edges.txt
-    ====================================
+    lookup-table-4x4x4-step110-edges.txt (10-deep)
+    ==============================================
     2 steps has 1 entries (0 percent, 0.00x previous step)
     5 steps has 432 entries (0 percent, 432.00x previous step)
     6 steps has 2,053 entries (0 percent, 4.75x previous step)
@@ -1069,384 +643,9 @@ class LookupTable444Edges(LookupTable):
         LookupTable.__init__(
             self,
             parent,
-            'lookup-table-4x4x4-step100-edges.txt',
+            'lookup-table-4x4x4-step110-edges.txt',
             '111111111111_10425376a8b9ecfdhgkiljnm',
             linecount=7363591) # 10-deep
-
-    def state(self):
-        """
-        Normally the state() for a LookupTable is a straightforward thing where
-        you look at certain squares on the cube, build the state from the squares
-        and you are done.  With LookupTable444Edges though things are a little
-        different because lookup-table-4x4x4-step100-edges.txt does not contain
-        all possible edge states (there are gazillions of them), it only contains
-        all of the edges states possible up to 9-deep.
-
-        So what we do is find the current state of edges and look through
-        lookup-table-4x4x4-step100-edges.txt for the line whose state is the closest
-        match to our own. The LookupTable.solve() code will then execute the set of
-        steps for that state which will pair several of our edges.
-        """
-        state = edges_recolor_pattern_444(self.parent.state[:])
-
-        edges_state = ''.join([state[square_index] for square_index in wings_444])
-        signature = get_edges_paired_binary_signature(edges_state)
-        signature_width = len(signature) + 1
-        edges_state = signature + '_' + edges_state
-
-        pre_non_paired_edges_count = self.parent.get_non_paired_edges_count()
-        log.info("%s: signature %s, %d unpaired edges" % (self, signature, pre_non_paired_edges_count))
-
-
-        # If all edges are paired return our actual state
-        if self.parent.edges_paired():
-            #log.info("%s: all edges are paired" % self)
-            return edges_state
-
-
-        # If our state is in lookup-table-4x4x4-step100-edges.txt, return our actual state.
-        # When this happens we will pair all of the remaining edges.
-        steps = self.steps(edges_state)
-
-        if steps is not None:
-            #log.info("%s: edges_state %s has steps %s" % (self, edges_state, ' '.join(steps)))
-            return edges_state
-
-
-        # If we are here then we need to look through lookup-table-4x4x4-step100-edges.txt
-        # to find the line whose state is the closest match to our own. This allows us to
-        # pair some of our unpaired edges and make some progress even though our current
-        # state isn't in the lookup table.
-        MAX_WING_PAIRS = 12
-        MAX_EDGES = 12
-
-        # It takes 12 steps to solve PLL
-        PLL_PENALTY = 12
-
-        # How many edges are paired?
-        pre_paired_edges_count = MAX_WING_PAIRS - pre_non_paired_edges_count
-
-        # Find all of the 'loose' matching entries in our lookup table. 'loose' means the
-        # entry will not unpair any of our already paired wings.
-        loose_matching_entry = []
-        max_wing_pair_count = None
-
-        '''
-        Thoughts on this:
-        - find_edge_entries_with_signature is fast but cannot always find a solution
-          in two passes, if it has to go to a third pass the solutions jump ~27 moves :(
-
-2018-01-12 09:03:56,313      __init__.py     INFO: group center solution (21 steps in)
-2018-01-12 09:03:56,315 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 000000000000, 12 unpaired edges
-2018-01-12 09:03:56,315 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature start
-2018-01-12 09:03:56,364 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature end (found 19706)
-2018-01-12 09:03:56,422 RubiksCube444.py  WARNING: pre_paired_edges_count 0, loose_matching_entry 68
-2018-01-12 09:03:56,461 RubiksCube444.py     INFO: best_entry: (4, 4, 10, '000000000000_baj9ikghl140dmcn673528ef')
-2018-01-12 09:03:56,462 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 101000000011, 8 unpaired edges
-2018-01-12 09:03:56,462 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature start
-2018-01-12 09:03:56,468 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature end (found 2718)
-2018-01-12 09:03:56,477 RubiksCube444.py  WARNING: pre_paired_edges_count 4, loose_matching_entry 1088
-2018-01-12 09:03:57,085 RubiksCube444.py     INFO: best_entry: (12, 12, 17, '101000000011_10if53abh6g7kde4982cljnm')
-2018-01-12 09:03:57,085 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 100110111001, 5 unpaired edges
-2018-01-12 09:03:57,086 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 111111111111, 0 unpaired edges
-2018-01-12 09:03:57,086 RubiksCube444.py     INFO: 4x4x4: edges paired, 48 steps in
-
-
-        - find_edge_entries_with_loose_signature is slow but can almost always find a
-          solution in two passes which is about 20 moves...20 is REALLY good
-
-2018-01-12 08:56:18,166      __init__.py     INFO: group center solution (21 steps in)
-2018-01-12 08:56:18,167 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 000000000000, 12 unpaired edges
-2018-01-12 08:56:18,167 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature start
-2018-01-12 08:56:20,433 RubiksCube444.py     INFO: 4x4x4-step100-edges: find_edge_entries_with_signature end (found 7363591)
-2018-01-12 08:56:40,643 RubiksCube444.py  WARNING: pre_paired_edges_count 0, loose_matching_entry 2266
-2018-01-12 08:56:41,673 RubiksCube444.py     INFO: best_entry: (12, 12, 20, '000000011110_7a59n280614cbmfdhgkilje3')
-2018-01-12 08:56:41,849 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 101001101001, 6 unpaired edges
-2018-01-12 08:56:41,850 RubiksCube444.py     INFO: 4x4x4-step100-edges: signature 111111111111, 0 unpaired edges
-2018-01-12 08:56:41,850 RubiksCube444.py     INFO: 4x4x4: edges paired, 41 steps in
-
-        - we need to first attempt find_edge_entries_with_signature(), if it finds
-          a solution in two passes we are done, if not then use find_edge_entries_with_loose_signature
-
-        - fix LookupTable to download parts aa, ab, and ac of lookup-table-4x4x4-step100-edges.txt.gz
-
-        - maybe parts of loose could be written in C to speed it up? The string comparison stuff seems really slow
-        - loose could search until it finds a PLL free two pass solution and then stop? That would be worth trying.
-
-        # remove the "2 steps has 1 entries" entry
-        '''
-        # This runs much faster (than find_edge_entries_with_loose_signature) because
-        # it is only looking over the signatures that are an exact match instead of a
-        # loose match. It produces slightly longer solutions but in about 1/6 the time.
-        log.info("%s: find_edge_entries_with_signature start" % self)
-        lines_to_examine = self.find_edge_entries_with_signature(signature)
-        log.info("%s: find_edge_entries_with_signature end (found %d)" % (self, len(lines_to_examine)))
-
-        if not lines_to_examine:
-            log.info("%s: find_edge_entries_with_loose_signature start" % self)
-            lines_to_examine = self.find_edge_entries_with_loose_signature(signature)
-            log.info("%s: find_edge_entries_with_loose_signature end (found %d)" % (self, len(lines_to_examine)))
-
-        for line in lines_to_examine:
-            (phase1_state, phase1_steps) = line.split(':')
-
-            common_count = get_characters_common_count(edges_state,
-                                                       phase1_state,
-                                                       signature_width)
-            wing_pair_count = int(common_count/2)
-
-            # Only bother with this entry if it will pair more wings than are currently paired
-            if wing_pair_count > pre_paired_edges_count:
-
-                if max_wing_pair_count is None:
-                    loose_matching_entry.append((wing_pair_count, line))
-                    max_wing_pair_count = wing_pair_count
-
-                elif wing_pair_count > max_wing_pair_count:
-                    #loose_matching_entry = []
-                    loose_matching_entry.append((wing_pair_count, line))
-                    max_wing_pair_count = wing_pair_count
-
-                elif wing_pair_count == max_wing_pair_count or wing_pair_count >= 4:
-                    loose_matching_entry.append((wing_pair_count, line))
-
-        log.warning("pre_paired_edges_count %d, loose_matching_entry %d" % (pre_paired_edges_count, len(loose_matching_entry)))
-        #log.warning("pre_paired_edges_count %d, loose_matching_entry(%d):\n%s\n" %
-        #    (pre_paired_edges_count, len(loose_matching_entry), pformat(loose_matching_entry)))
-        original_state = self.parent.state[:]
-        original_solution = self.parent.solution[:]
-        best_score_states = []
-
-        # Now run through each state:steps in loose_matching_entry
-        for (wing_pair_count, line) in loose_matching_entry:
-            self.parent.state = original_state[:]
-            self.parent.solution = original_solution[:]
-
-            (phase1_edges_state_fake, phase1_steps) = line.split(':')
-            phase1_steps = phase1_steps.split()
-
-            # Apply the phase1 steps
-            for step in phase1_steps:
-                self.parent.rotate(step)
-
-            phase1_state = edges_recolor_pattern_444(self.parent.state[:])
-            phase1_edges_state = ''.join([phase1_state[square_index] for square_index in wings_444])
-            phase1_signature = get_edges_paired_binary_signature(phase1_edges_state)
-            phase1_edges_state = phase1_signature + '_' + phase1_edges_state
-
-            # If that got us to our state_target then phase1 alone paired all
-            # of the edges...this is unlikely
-            if phase1_edges_state in self.state_target:
-
-                if self.parent.edge_solution_leads_to_pll_parity():
-                    best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps) + PLL_PENALTY, phase1_edges_state_fake))
-                else:
-                    best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps), phase1_edges_state_fake))
-
-            else:
-                # phase1_steps did not pair all edges so do another lookup and execute those steps
-                phase2_steps = self.steps(phase1_edges_state)
-
-                if phase2_steps is not None:
-                    for step in phase2_steps:
-                        self.parent.rotate(step)
-
-                    phase2_state = edges_recolor_pattern_444(self.parent.state[:])
-                    phase2_edges_state = ''.join([phase2_state[square_index] for square_index in wings_444])
-                    phase2_signature = get_edges_paired_binary_signature(phase2_edges_state)
-                    phase2_edges_state = phase2_signature + '_' + phase2_edges_state
-
-                    if phase2_edges_state in self.state_target:
-                        if self.parent.edge_solution_leads_to_pll_parity():
-                            #best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps) + len(phase2_steps) + PLL_PENALTY, phase1_edges_state_fake))
-                            pass
-                        else:
-                            best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps) + len(phase2_steps), phase1_edges_state_fake))
-                    else:
-                        post_non_paired_edges_count = self.parent.get_non_paired_edges_count()
-                        paired_edges_count = MAX_WING_PAIRS - post_non_paired_edges_count
-
-                        best_score_states.append((paired_edges_count, paired_edges_count, len(phase1_steps) + len(phase2_steps), phase1_edges_state_fake))
-                else:
-                    post_non_paired_edges_count = self.parent.get_non_paired_edges_count()
-                    paired_edges_count = MAX_WING_PAIRS - post_non_paired_edges_count
-
-                    best_score_states.append((paired_edges_count, paired_edges_count, len(phase1_steps), phase1_edges_state_fake))
-
-            #log.info("HERE 10 %s: %s, %s, phase1_edges_state %s, phase2 steps %s" %
-            #    (self, wing_pair_count, line, phase1_edges_state, pformat(phase2_steps)))
-
-        #log.info("best_score_states:\n%s" % pformat(best_score_states))
-        best_entry = get_best_entry(best_score_states)
-        log.info("best_entry: %s" % pformat(best_entry))
-
-        self.parent.state = original_state[:]
-        self.parent.solution = original_solution[:]
-        return best_entry[3]
-
-
-class LookupTable444StageFirstFourEdges(LookupTable):
-    """
-    lookup-table-4x4x4-step105-stage-first-four-edges.txt
-    =====================================================
-    2 steps has 3 entries (0 percent, 0.00x previous step)
-    3 steps has 6 entries (0 percent, 2.00x previous step)
-    4 steps has 72 entries (0 percent, 12.00x previous step)
-    5 steps has 586 entries (0 percent, 8.14x previous step)
-    6 steps has 3328 entries (1 percent, 5.68x previous step)
-    7 steps has 21172 entries (8 percent, 6.36x previous step)
-    8 steps has 46712 entries (17 percent, 2.21x previous step)
-    9 steps has 189384 entries (72 percent, 4.05x previous step)
-
-    Total: 261263 entries
-    Average: 8.610350 moves
-    """
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step105-stage-first-four-edges.txt',
-            'TBD',
-            linecount=261263)
-
-    def state(self, wing_strs_to_stage):
-        state = self.parent.state[:]
-
-        for square_index in wings_444:
-            side = self.parent.get_side_for_index(square_index)
-            partner_index = side.get_wing_partner(square_index)
-            square_value = state[square_index]
-            partner_value = state[partner_index]
-            wing_str = ''.join(sorted([square_value, partner_value]))
-
-            if wing_str in wing_strs_to_stage:
-                state[square_index] = 'L'
-                state[partner_index] = 'L'
-            else:
-                state[square_index] = 'x'
-                state[partner_index] = 'x'
-
-        edges_state = ''.join([state[square_index] for square_index in wings_444])
-        return edges_state
-
-
-class LookupTable444StageSecondFourEdges(LookupTable):
-    """
-    lookup-table-4x4x4-step106-stage-second-four-edges.txt
-    ======================================================
-    2 steps has 1 entries (0 percent, 0.00x previous step)
-    3 steps has 2 entries (0 percent, 2.00x previous step)
-    4 steps has 9 entries (0 percent, 4.50x previous step)
-    5 steps has 46 entries (1 percent, 5.11x previous step)
-    6 steps has 176 entries (5 percent, 3.83x previous step)
-    7 steps has 488 entries (14 percent, 2.77x previous step)
-    8 steps has 820 entries (24 percent, 1.68x previous step)
-    9 steps has 1834 entries (54 percent, 2.24x previous step)
-
-    Total: 3376 entries
-    Average: 8.238152 moves
-
-    This table should have 12,870 entries
-    """
-
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step106-stage-second-four-edges.txt',
-            'TBD',
-            linecount=3376)
-
-    def state(self, wing_strs_to_stage):
-        state = self.parent.state[:]
-
-        for square_index in wings_444:
-            side = self.parent.get_side_for_index(square_index)
-            partner_index = side.get_wing_partner(square_index)
-            square_value = state[square_index]
-            partner_value = state[partner_index]
-            wing_str = ''.join(sorted([square_value, partner_value]))
-
-            if wing_str in wing_strs_to_stage:
-                state[square_index] = 'U'
-                state[partner_index] = 'U'
-            else:
-                state[square_index] = 'x'
-                state[partner_index] = 'x'
-
-        edges_state = ''.join([state[square_index] for square_index in wings_444])
-        return edges_state
-
-
-class LookupTable444PairLastFourEdges(LookupTable):
-    """
-    lookup-table-4x4x4-step103-pair-last-four-edges.txt
-    ===================================================
-    2 steps has 1 entries (0 percent, 0.00x previous step)
-    6 steps has 7 entries (6 percent, 7.00x previous step)
-    7 steps has 24 entries (22 percent, 3.43x previous step)
-    8 steps has 8 entries (7 percent, 0.33x previous step)
-    9 steps has 40 entries (38 percent, 5.00x previous step)
-    10 steps has 11 entries (10 percent, 0.28x previous step)
-    11 steps has 14 entries (13 percent, 1.27x previous step)
-
-    Total: 105 entries
-    Average: 8.571429 moves
-    """
-    def __init__(self, parent):
-        LookupTable.__init__(
-            self,
-            parent,
-            'lookup-table-4x4x4-step103-pair-last-four-edges.txt',
-            'a8b9ecfd',
-            linecount=105)
-
-    def state(self):
-        parent_state = self.parent.state[:]
-
-        # The lookup table was built using LB, LF, RF, and RB so we must re-color the
-        # 4 colors currently on LB, LF, RF, and RB to really be LB, LF, RF, and RB
-        LR_remap = {}
-        next_remap = 'LB'
-
-        for (edge_index, square_index, partner_index) in LR_edges_recolor_tuples_444:
-            square_value = parent_state[square_index]
-            partner_value = parent_state[partner_index]
-
-            if (square_value, partner_value) not in LR_remap:
-                LR_remap[(square_value, partner_value)] = next_remap
-                LR_remap[(partner_value, square_value)] = ''.join(reversed(next_remap))
-
-                if next_remap == 'LB':
-                    next_remap = 'LF'
-
-                elif next_remap == 'LF':
-                    next_remap = 'RF'
-
-                elif next_remap == 'RF':
-                    next_remap = 'RB'
-
-                elif next_remap == 'RB':
-                    next_remap = None
-
-        #log.info("LR_remap\n%s\n" % pformat(LR_remap))
-
-        for (edge_index, square_index, partner_index) in LR_edges_recolor_tuples_444:
-            square_value = parent_state[square_index]
-            partner_value = parent_state[partner_index]
-
-            if (square_value, partner_value) in LR_remap:
-                parent_state[square_index] = LR_remap[(square_value, partner_value)][0]
-                parent_state[partner_index] = LR_remap[(square_value, partner_value)][1]
-
-            elif (partner_value, square_value) in LR_remap:
-                parent_state[square_index] = LR_remap[(partner_value, square_value)][0]
-                parent_state[partner_index] = LR_remap[(partner_value, square_value)][1]
-
-        state = LR_edges_recolor_pattern_444(parent_state[:])
-
-        result = ''.join(state[index] for index in (21, 25, 24, 28, 53, 57, 56, 60))
-        return result
 
 
 class RubiksCube444(RubiksCube):
@@ -1454,7 +653,6 @@ class RubiksCube444(RubiksCube):
     def __init__(self, state, order, colormap=None, avoid_pll=True, debug=False):
         RubiksCube.__init__(self, state, order, colormap, debug)
         self.avoid_pll = avoid_pll
-        self.edge_mapping = {}
 
         if debug:
             log.setLevel(logging.DEBUG)
@@ -1514,1100 +712,331 @@ class RubiksCube444(RubiksCube):
             return
         self.lt_init_called = True
 
-        # brainstorm
-        # Today we typically stage all centers and then solve them
-        # - Staging is 24!/(8! * 8! * 8!) or 9,465,511,770
-        # - We have three prune tables (UD, LR, and FB) of 24!/(8! * 16!) or 735,471
-        #
-        # option #1 - solve all centers at once
-        # - would be 24!/(4! * 4! * 4! * 4! * 4! * 4!) or 3,246,670,537,110,000
-        # - three prune tables (UD, LR, and FB) of 24!/(4! * 4! * 16!) or 51,482,970
-        # - 51,482,970 / 3,246,670,537,110,000 is 0.000 000 015 8571587, IDA might take a few hours
-        # - I've done this before and it removes ~6 steps when solving centers. We
-        #   currently average 64 steps to solve a 4x4x4 but the tsai solver averages 55....so
-        #   this would take a few hours to run but solutions still wouldn't be as short as
-        #   the tsai solver.
-        # - feasible but not worth it
-        #
-        #
-        # option #2 - combine tsai phases 1 and 2
-        # - this would be staging UD, FB centers, solving LR centers and orienting all edges
-        # - orienting edges is 2,704,156
-        # - centers is 24!/(4! * 4! * 8! * 8!) or 662,585,823,900
-        # - so would be 662,585,823,900 * 2,704,156 or 1,791,735,431,214,128,400
-        # - 2,704,156 / 1,791,735,431,214,128,400 or 0.000 000 000 001 5092, IDA might take weeks
-        # - 662,585,823,900 / 1,791,735,431,214,128,400 or 0.000 000 369 8011505, IDA would be
-        #   fast but that is with a 662 billion entry prune table
-        # - a LR prune table would be 24!/(4! * 4! * 16!) or 51,482,970
-        #   - 51,482,970 / 1,791,735,431,214,128,400 or 0.000 000 000 028 7336, IDA might take weeks
-        # - a UDFB prune table would be 24!/(8! * 8! * 8!) or 9,465,511,770
-        #   - 9,465,511,770 / 1,791,735,431,214,128,400 or 0.000 000 005 2828736, IDA would take a few hours
-        #     9 billion would be a huge prune table
-        # - probably not feasible
-
-
-        # There are three CPU "modes" we can run in:
-        #
-        # normal : Uses a middle ground of CPU and produces not the shortest or longest solution.
-        #          This will stage all centers at once.
-        #
-        # max    : Uses more CPU and produce a shorter solution
-        #          This will stage all centers at once.
-        #
-        # tsai   : Uses the most CPU but produces the shortest solution
-
         # ==============
         # Phase 1 tables
         # ==============
-        if self.cpu_mode in ('normal', 'max'):
+        # prune tables
+        self.lt_UD_centers_stage = LookupTable444UDCentersStage(self)
+        self.lt_LR_centers_stage = LookupTable444LRCentersStage(self)
+        self.lt_FB_centers_stage = LookupTable444FBCentersStage(self)
 
-            # prune tables
-            self.lt_UD_centers_stage = LookupTable444UDCentersStage(self)
-            self.lt_LR_centers_stage = LookupTable444LRCentersStage(self)
-            self.lt_FB_centers_stage = LookupTable444FBCentersStage(self)
-
-            # Stage all centers via IDA
-            self.lt_ULFRBD_centers_stage = LookupTableIDA444ULFRBDCentersStage(self)
-
-        elif self.cpu_mode == 'tsai':
-
-            # Stage LR centers
-            self.lt_tsai_phase1 = LookupTable444TsaiPhase1(self)
-
-        else:
-            raise Exception("We should not be here, cpu_mode %s" % self.cpu_mode)
+        # Stage all centers via IDA
+        self.lt_ULFRBD_centers_stage = LookupTableIDA444ULFRBDCentersStage(self)
 
         # =============
         # Phase2 tables
         # =============
-        if self.cpu_mode in ('normal', 'max'):
-            self.lt_ULFRBD_centers_solve = LookupTable444ULFRBDCentersSolve(self)
+        self.lt_ULFRBD_centers_solve = LookupTable444ULFRBDCentersSolve(self)
+        self.lt_ULFRBD_centers_solve_edges_stage = LookupTable444ULFRBDCentersSolveEdgesStage(self)
+        self.lt_ULFRBD_centers_solve_edges_stage.avoid_pll = True
+        self.lt_ULFRBD_centers_solve_edges_stage.avoid_oll = True
 
-        elif self.cpu_mode == 'tsai':
-            # - orient the edges into high/low groups
-            # - solve LR centers to one of 12 states
-            # - stage UD and FB centers
-            self.lt_tsai_phase2_centers = LookupTable444TsaiPhase2Centers(self)
-            self.lt_tsai_phase2 = LookupTableIDA444TsaiPhase2(self)
-            #self.lt_tsai_phase2_centers.preload_cache()
+        # Experiment
+        #self.lt_UD_centers_solve_unstaged = LookupTable444UDCentersSolveUnstaged(self)
+        #self.lt_LR_centers_solve_unstaged = LookupTable444LRCentersSolveUnstaged(self)
+        #self.lt_FB_centers_solve_unstaged = LookupTable444FBCentersSolveUnstaged(self)
+        #self.lt_ULFRBD_centers_solve_unstaged = LookupTableIDA444ULFRBDCentersSolveUnstaged(self)
+        #self.lt_ULFRBD_centers_solve_unstaged.avoid_oll = True
 
-        else:
-            raise Exception("We should not be here, cpu_mode %s" % self.cpu_mode)
-
-        # =============
-        # Phase3 tables
-        # =============
-        if self.cpu_mode in ('normal', 'max'):
-            pass
-
-        elif self.cpu_mode == 'tsai':
-
-            # prune tables
-            self.lt_tsai_phase3_edges_solve = LookupTable444TsaiPhase3Edges(self)
-            self.lt_tsai_phase3_centers_solve = LookupTable444TsaiPhase3CentersSolve(self)
-
-            #self.lt_tsai_phase3_edges_solve.preload_state_set()
-            #self.lt_tsai_phase3_centers_solve.preload_cache()
-
-            self.lt_tsai_phase3 = LookupTableIDA444TsaiPhase3(self)
-
-        else:
-            raise Exception("We should not be here, cpu_mode %s" % self.cpu_mode)
-
-
-        # For tsai these two tables are only used if the centers have already been solved
-        # For non-tsai they are always used
-        self.lt_edges_slice_forward = LookupTable444EdgesSliceForward(self)
-        self.lt_edges_slice_backward = LookupTable444EdgesSliceBackward(self)
+        # Edges table
         self.lt_edges = LookupTable444Edges(self)
-
-        self.lt_edges_stage_first_four = LookupTable444StageFirstFourEdges(self)
-        self.lt_edges_stage_second_four = LookupTable444StageSecondFourEdges(self)
-        self.lt_edges_pair_last_four = LookupTable444PairLastFourEdges(self)
-
-    def tsai_phase2_orient_edges_state(self, edges_to_flip, return_hex):
-        state = self.state
-        result = []
-
-        wing_str_map = {
-            'UB' : 'UB',
-            'BU' : 'UB',
-            'UL' : 'UL',
-            'LU' : 'UL',
-            'UR' : 'UR',
-            'RU' : 'UR',
-            'UF' : 'UF',
-            'FU' : 'UF',
-            'LB' : 'LB',
-            'BL' : 'LB',
-            'LF' : 'LF',
-            'FL' : 'LF',
-            'RB' : 'RB',
-            'BR' : 'RB',
-            'RF' : 'RF',
-            'FR' : 'RF',
-            'DB' : 'DB',
-            'BD' : 'DB',
-            'DL' : 'DL',
-            'LD' : 'DL',
-            'DR' : 'DR',
-            'RD' : 'DR',
-            'DF' : 'DF',
-            'FD' : 'DF',
-        }
-
-        for (x, y) in (
-                (2, 67), (3, 66), (5, 18), (8, 51), (9, 19), (12, 50), (14, 34),
-                (15, 35), (18, 5), (19, 9), (21, 72), (24, 37), (25, 76), (28, 41),
-                (30, 89), (31, 85), (34, 14), (35, 15), (37, 24), (40, 53), (41, 28),
-                (44, 57), (46, 82), (47, 83), (50, 12), (51, 8), (53, 40), (56, 69),
-                (57, 44), (60, 73), (62, 88), (63, 92), (66, 3), (67, 2), (69, 56),
-                (72, 21), (73, 60), (76, 25), (78, 95), (79, 94), (82, 46), (83, 47),
-                (85, 31), (88, 62), (89, 30), (92, 63), (94, 79), (95, 78)):
-            state_x = state[x]
-            state_y = state[y]
-            wing_str = wing_str_map[''.join((state_x, state_y))]
-            high_low = tsai_phase2_orient_edges_444[(x, y, state_x, state_y)]
-
-            if wing_str in edges_to_flip:
-                if high_low == 'U':
-                    high_low = 'D'
-                else:
-                    high_low = 'U'
-
-            if return_hex:
-                high_low = high_low.replace('D', '0').replace('U', '1')
-
-            result.append(high_low)
-
-        result = ''.join(result)
-
-        if return_hex:
-            return "%012x" % int(result, 2)
-        else:
-            return result
-
-    def tsai_phase2_orient_edges_print(self):
-
-        # save cube state
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-
-        self.nuke_corners()
-        self.nuke_centers()
-
-        orient_edge_state = list(self.tsai_phase2_orient_edges_state(self.edge_mapping, return_hex=False))
-        orient_edge_state_index = 0
-        for side in list(self.sides.values()):
-            for square_index in side.edge_pos:
-                self.state[square_index] = orient_edge_state[orient_edge_state_index]
-                orient_edge_state_index += 1
-        self.print_cube()
-
-        self.state = original_state[:]
-        self.solution = original_solution[:]
 
     def group_centers_guts(self):
         self.lt_init()
 
-        # The non-tsai solver will only solve the centers here
-        if self.cpu_mode in ('normal', 'max'):
+        # If the centers are already solve then return and let group_edges() pair the edges
+        if self.centers_solved():
+            return
 
-            # If the centers are already solve then return and let group_edges() pair the edges
-            if self.centers_solved():
-                return
-
-            log.info("%s: Start of Phase1" % self)
-            self.lt_ULFRBD_centers_stage.avoid_oll = True
-            self.lt_ULFRBD_centers_stage.solve()
-            self.print_cube()
-            log.info("%s: End of Phase1, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            log.info("")
-
-            log.info("%s: Start of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            self.lt_ULFRBD_centers_solve.solve()
-            self.print_cube()
-            log.info("%s: End of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            log.info("")
-
-        # The tsai will solve the centers and pair the edges
-        elif self.cpu_mode == 'tsai':
-
-            # save cube state
-            original_state = self.state[:]
-            original_solution = self.solution[:]
-
-            log.info("%s: Start of Phase1, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            self.lt_tsai_phase1.solve()
-            self.print_cube()
-            log.info("%s: End of Phase1, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-
-            # Test the prune table
-            #self.lt_tsai_phase2_centers.solve()
-            #self.tsai_phase2_orient_edges_print()
-            #self.print_cube()
-            #sys.exit(0)
-
-            log.info("%s: Start of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            self.lt_tsai_phase2.avoid_oll = True
-            self.lt_tsai_phase2.avoid_pll = True
-            self.lt_tsai_phase2.solve()
-            self.print_cube()
-            #self.tsai_phase2_orient_edges_print()
-            log.info("%s: End of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-
-            # Testing the phase3 prune tables
-            #self.lt_tsai_phase3_edges_solve.solve()
-            #self.lt_tsai_phase3_centers_solve.solve()
-            #self.tsai_phase2_orient_edges_print()
-            #self.print_cube()
-
-            log.info("%s: Start of Phase3, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            self.lt_tsai_phase3.avoid_oll = True
-            self.lt_tsai_phase3.avoid_pll = True
-            self.lt_tsai_phase3.solve()
-            self.print_cube()
-            log.info("%s: End of Phase3, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-            log.info("")
-
-    def edge_string_to_find(self, target_wing, sister_wing1, sister_wing2, sister_wing3):
-        state = []
-        for side in (self.sideU, self.sideL, self.sideF, self.sideR, self.sideB, self.sideD):
-            for square_index in sorted(side.edge_pos):
-
-                if square_index in (target_wing[0], target_wing[1]):
-                    state.append('A')
-
-                elif square_index in (sister_wing1[0], sister_wing1[1]):
-                    state.append('B')
-
-                elif square_index in (sister_wing2[0], sister_wing2[1]):
-                    state.append('C')
-
-                elif square_index in (sister_wing3[0], sister_wing3[1]):
-                    state.append('D')
-
-                else:
-                    state.append('x')
-
-        return ''.join(state)
-
-    def find_moves_to_stage_slice_forward_444(self, target_wing, sister_wing1, sister_wing2, sister_wing3):
-        """
-        target_wing must go in spot 41
-        sister_wing1 must go in spot (40, 53)
-        sister_wing2 must go in spot (56, 69)
-        sister_wing3 must go in spot (72, 21)
-        """
-        state = self.edge_string_to_find(target_wing, sister_wing1, sister_wing2, sister_wing3)
-        return self.lt_edges_slice_forward.steps(state)
-
-    def find_moves_to_stage_slice_backward_444(self, target_wing, sister_wing1, sister_wing2, sister_wing3):
-        """
-        target_wing must go in spot (44, 57)
-        sister_wing1 must go in spot (24, 37)
-        sister_wing2 must go in spot (72, 21))
-        sister_wing3 must go in spot (56, 69)
-        """
-        state = self.edge_string_to_find(target_wing, sister_wing1, sister_wing2, sister_wing3)
-        return self.lt_edges_slice_backward.steps(state)
-
-    def prep_for_slice_back_444(self):
-
-        # Now set things up so that when we slice back we pair another 3 edges.
-        # Work with the wing on the bottom of F-east
-        target_wing = self.sideF.edge_east_pos[-1]
-        sister_wing = self.get_wings(target_wing)[0]
-        target_wing_partner_index = 57
-        sister_wing1 = self.get_wings(target_wing)[0]
-        sister_wing1_side = self.get_side_for_index(sister_wing1[0])
-        sister_wing1_neighbor = sister_wing1_side.get_wing_neighbors(sister_wing1[0])[0]
-        sister_wing2 = self.get_wings(sister_wing1_neighbor)[0]
-        sister_wing2_side = self.get_side_for_index(sister_wing2[0])
-        sister_wing2_neighbor = sister_wing2_side.get_wing_neighbors(sister_wing2[0])[0]
-        sister_wing3 = self.get_wings(sister_wing2_neighbor)[0]
-        steps = self.find_moves_to_stage_slice_backward_444((target_wing, target_wing_partner_index), sister_wing1, sister_wing2, sister_wing3)
-
-        if steps:
-            for step in steps:
-                self.rotate(step)
-            return True
-
-        # If we are here it means the unpaired edge on F-east needs to be swapped with
-        # its sister_wing1. In other words F-east and sister-wing1 have the same two
-        # sets of colors and the two of them together would create two paired edges if
-        # we swapped their wings.
-        #
-        # As a work-around, move some other unpaired edge into F-east. There are no
-        # guarantees we won't hit the exact same problem with that edge but that doesn't
-        # happen too often.
-
-        if not self.sideU.north_edge_paired() and self.sideU.has_wing(sister_wing1) != 'north':
-            self.rotate("F'")
-            self.rotate("U2")
-            self.rotate("F")
-        elif not self.sideU.east_edge_paired() and self.sideU.has_wing(sister_wing1) != 'east':
-            self.rotate("F'")
-            self.rotate("U")
-            self.rotate("F")
-        elif not self.sideU.west_edge_paired() and self.sideU.has_wing(sister_wing1) != 'west':
-            self.rotate("F'")
-            self.rotate("U'")
-            self.rotate("F")
-        elif not self.sideD.south_edge_paired() and self.sideD.has_wing(sister_wing1) != 'south':
-            self.rotate("F")
-            self.rotate("D2")
-            self.rotate("F'")
-        elif not self.sideD.east_edge_paired() and self.sideD.has_wing(sister_wing1) != 'east':
-            self.rotate("F")
-            self.rotate("D'")
-            self.rotate("F'")
-        elif not self.sideD.west_edge_paired() and self.sideD.has_wing(sister_wing1) != 'west':
-            self.rotate("F")
-            self.rotate("D")
-            self.rotate("F'")
-        # Look for these last since they take 4 steps instead of 3
-        elif not self.sideU.south_edge_paired() and self.sideU.has_wing(sister_wing1) != 'south':
-            self.rotate("U'")
-            self.rotate("F'")
-            self.rotate("U")
-            self.rotate("F")
-        elif not self.sideD.north_edge_paired() and self.sideD.has_wing(sister_wing1) != 'north':
-            self.rotate("D")
-            self.rotate("F")
-            self.rotate("D'")
-            self.rotate("F'")
-        else:
-            # If we are here we are down to two unpaired wings
-            return False
-
-        if self.sideF.east_edge_paired():
-            raise SolveError("F-east should not be paired")
-
-        target_wing = self.sideF.edge_east_pos[-1]
-        sister_wing = self.get_wings(target_wing)[0]
-        target_wing_partner_index = 57
-        sister_wing1 = self.get_wings(target_wing)[0]
-        sister_wing1_side = self.get_side_for_index(sister_wing1[0])
-        sister_wing1_neighbor = sister_wing1_side.get_wing_neighbors(sister_wing1[0])[0]
-        sister_wing2 = self.get_wings(sister_wing1_neighbor)[0]
-        sister_wing2_side = self.get_side_for_index(sister_wing2[0])
-        sister_wing2_neighbor = sister_wing2_side.get_wing_neighbors(sister_wing2[0])[0]
-        sister_wing3 = self.get_wings(sister_wing2_neighbor)[0]
-        steps = self.find_moves_to_stage_slice_backward_444((target_wing, target_wing_partner_index), sister_wing1, sister_wing2, sister_wing3)
-
-        if steps:
-            for step in steps:
-                self.rotate(step)
-            return True
-        else:
-            return False
-
-    def pair_six_edges_444(self, wing_to_pair):
-        """
-        Sections are:
-        - PREP-FOR-Uw-SLICE
-        - Uw
-        - PREP-FOR-REVERSE-Uw-SLICE
-        - Uw'
-        """
-
-        # save cube state
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-        original_solution_len = self.get_solution_len_minus_rotates(self.solution)
-        original_non_paired_wings_count = self.get_non_paired_wings_count()
-
-        self.rotate_edge_to_F_west(wing_to_pair)
-        #log.info("PREP-FOR-Uw-SLICE (begin)")
-        #self.print_cube()
-
-        # Work with the wing at the bottom of the F-west edge
-        # Move the sister wing to the top of F-east
-        target_wing = self.sideF.edge_west_pos[-1]
-        target_wing_partner_index = 28
-        sister_wing1 = self.get_wings(target_wing)[0]
-        sister_wing1_side = self.get_side_for_index(sister_wing1[0])
-        sister_wing1_neighbor = sister_wing1_side.get_wing_neighbors(sister_wing1[0])[0]
-        sister_wing2 = self.get_wings(sister_wing1_neighbor)[0]
-        sister_wing2_side = self.get_side_for_index(sister_wing2[0])
-        sister_wing2_neighbor = sister_wing2_side.get_wing_neighbors(sister_wing2[0])[0]
-        sister_wing3 = self.get_wings(sister_wing2_neighbor)[0]
-
-        steps = self.find_moves_to_stage_slice_forward_444((target_wing, target_wing_partner_index), sister_wing1, sister_wing2, sister_wing3)
-
-        if not steps:
-            log.info("pair_six_edges_444()    could not find steps to slice forward")
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            return False
-
-        for step in steps:
-            self.rotate(step)
-
-        # At this point we are setup to slice forward and pair 3 edges
-        #log.info("PREP-FOR-Uw-SLICE (end)....SLICE (begin)")
-        #self.print_cube()
-        self.rotate("Uw")
-        #log.info("SLICE (end)")
-        #self.print_cube()
-
-        post_slice_forward_non_paired_wings_count = self.get_non_paired_wings_count()
-        post_slice_forward_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        log.info("pair_six_edges_444()    paired %d wings in %d moves on slice forward (%d left to pair)" %
-            (original_non_paired_wings_count - post_slice_forward_non_paired_wings_count,
-             post_slice_forward_solution_len - original_solution_len,
-             post_slice_forward_non_paired_wings_count))
-
-        if self.sideL.west_edge_paired():
-
-            # The stars aligned and we paired 4 at once so we cannot rotate L-west around
-            # to F-east, move an unpaired edge to F-east. This preserves the LFRB centers
-            # for the slice back.
-            if not self.sideU.north_edge_paired():
-                self.rotate("F'")
-                self.rotate("U2")
-                self.rotate("F")
-            elif not self.sideU.east_edge_paired():
-                self.rotate("F'")
-                self.rotate("U")
-                self.rotate("F")
-            elif not self.sideU.west_edge_paired():
-                self.rotate("F'")
-                self.rotate("U'")
-                self.rotate("F")
-            elif not self.sideD.south_edge_paired():
-                self.rotate("F")
-                self.rotate("D2")
-                self.rotate("F'")
-            elif not self.sideD.east_edge_paired():
-                self.rotate("F")
-                self.rotate("D'")
-                self.rotate("F'")
-            elif not self.sideD.west_edge_paired():
-                self.rotate("F")
-                self.rotate("D")
-                self.rotate("F'")
-            # Look for these last since they take 4 steps instead of 3
-            elif not self.sideU.south_edge_paired():
-                self.rotate("U'")
-                self.rotate("F'")
-                self.rotate("U")
-                self.rotate("F")
-            elif not self.sideD.north_edge_paired():
-                self.rotate("D")
-                self.rotate("F")
-                self.rotate("D'")
-                self.rotate("F'")
-            else:
-                raise SolveError("Did not find an unpaired edge")
-
-        else:
-            self.rotate_y()
-            self.rotate_y()
-
-        if self.sideF.east_edge_paired():
-            log.warning("F-east should not be paired")
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            return False
-
-        if not self.prep_for_slice_back_444():
-            log.warning("cannot slice back")
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            return False
-
-        #log.info("PREP-FOR-Uw'-SLICE-BACK (end)...SLICE BACK (begin)")
-        #self.print_cube()
-        self.rotate("Uw'")
-        #log.info("SLICE BACK (end)")
-        #self.print_cube()
-
-        post_slice_back_non_paired_wings_count = self.get_non_paired_wings_count()
-        post_slice_back_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        log.info("pair_six_edges_444()    paired %d wings in %d moves on slice back (%d left to pair)" %
-            (post_slice_forward_non_paired_wings_count - post_slice_back_non_paired_wings_count,
-             post_slice_back_solution_len - post_slice_forward_solution_len,
-             post_slice_back_non_paired_wings_count))
-
-        return True
-
-    def pair_last_six_edges_444(self):
-        """
-        Sections are:
-        - PREP-FOR-Uw-SLICE
-        - Uw
-        - PREP-FOR-REVERSE-Uw-SLICE
-        - Uw'
-        """
-        # save cube state
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-        original_solution_len = self.get_solution_len_minus_rotates(self.solution)
-        original_non_paired_wings_count = self.get_non_paired_wings_count()
-        original_non_paired_edges = self.get_non_paired_edges()
-
-        min_solution_len = None
-        min_solution_state = None
-        min_solution = None
-
-        for wing_to_pair in original_non_paired_edges:
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            self.rotate_edge_to_F_west(wing_to_pair[0])
-
-            # Work with the wing at the bottom of the F-west edge
-            # Move the sister wing to the top of F-east
-            target_wing = self.sideF.edge_west_pos[-1]
-            target_wing_partner_index = 28
-            sister_wing1 = self.get_wings(target_wing)[0]
-            sister_wing1_side = self.get_side_for_index(sister_wing1[0])
-            sister_wing1_neighbor = sister_wing1_side.get_wing_neighbors(sister_wing1[0])[0]
-            sister_wing2 = self.get_wings(sister_wing1_neighbor)[0]
-            sister_wing2_side = self.get_side_for_index(sister_wing2[0])
-            sister_wing2_neighbor = sister_wing2_side.get_wing_neighbors(sister_wing2[0])[0]
-            sister_wing3 = self.get_wings(sister_wing2_neighbor)[0]
-
-            #log.info("target_wing: %s" % target_wing)
-            #log.info("sister_wing1 %s on %s, neighbor %s" % (sister_wing1, sister_wing1_side, sister_wing1_neighbor))
-            #log.info("sister_wing2 %s on %s, neighbor %s" % (sister_wing2, sister_wing2_side, sister_wing2_neighbor))
-            #log.info("sister_wing3 %s" % pformat(sister_wing3))
-
-            sister_wing3_candidates = []
-
-            # We need sister_wing3 to be any unpaired edge that allows us
-            # to only pair 2 on the slice forward
-            for wing in self.get_non_paired_wings():
-                if (wing[0] not in (target_wing, sister_wing1, sister_wing2, sister_wing3) and
-                    wing[1] not in (target_wing, sister_wing1, sister_wing2, sister_wing3)):
-                    sister_wing3_candidates.append(wing[1])
-
-            min_sister_wing3_steps_len = None
-            min_sister_wing3_steps = None
-            min_sister_wing3 = None
-
-            for x in sister_wing3_candidates:
-                steps = self.find_moves_to_stage_slice_forward_444((target_wing, target_wing_partner_index), sister_wing1, sister_wing2, x)
-
-                if steps:
-                    steps_len = len(steps)
-
-                    if min_sister_wing3_steps_len is None or steps_len < min_sister_wing3_steps_len:
-                        min_sister_wing3_steps_len = steps_len
-                        min_sister_wing3_steps = steps
-                        min_sister_wing3 = x
-
-            sister_wing3 = min_sister_wing3
-            steps = min_sister_wing3_steps
-            #log.info("sister_wing3 %s" % pformat(sister_wing3))
-
-            if not steps:
-                log.info("pair_last_six_edges_444() cannot slice back (no steps found)")
-                continue
-
-            for step in steps:
-                self.rotate(step)
-
-            # At this point we are setup to slice forward and pair 2 edges
-            #log.info("PREP-FOR-Uw-SLICE (end)....SLICE (begin)")
-            #self.print_cube()
-            self.rotate("Uw")
-            #log.info("SLICE (end)")
-            #self.print_cube()
-
-            post_slice_forward_non_paired_wings_count = self.get_non_paired_wings_count()
-            post_slice_forward_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-            log.info("pair_last_six_edges_444() paired %d wings in %d moves on slice forward (%d left to pair)" %
-                (original_non_paired_wings_count - post_slice_forward_non_paired_wings_count,
-                 post_slice_forward_solution_len - original_solution_len,
-                 post_slice_forward_non_paired_wings_count))
-
-            if self.sideF.east_edge_paired():
-                for x in range(3):
-                    self.rotate_y()
-                    if not self.sideF.east_edge_paired():
-                        break
-
-            if self.sideF.east_edge_paired():
-                log.info("pair_last_six_edges_444() cannot slice back (F-east paired)")
-                continue
-
-            if not self.prep_for_slice_back_444():
-                log.info("pair_last_six_edges_444() cannot slice back (prep failed)")
-                continue
-
-            self.rotate("Uw'")
-
-            post_slice_back_non_paired_wings_count = self.get_non_paired_wings_count()
-            post_slice_back_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-            if min_solution_len is None or post_slice_back_solution_len < min_solution_len:
-                min_solution_len = post_slice_back_solution_len
-                min_solution_state = self.state[:]
-                min_solution = self.solution[:]
-                log.info("pair_last_six_edges_444() paired %d wings in %d moves on slice back (%d left to pair) (NEW MIN %d)" %
-                    (post_slice_forward_non_paired_wings_count - post_slice_back_non_paired_wings_count,
-                    post_slice_back_solution_len - post_slice_forward_solution_len,
-                    post_slice_back_non_paired_wings_count,
-                    post_slice_back_solution_len - original_solution_len))
-            else:
-                log.info("pair_last_six_edges_444() paired %d wings in %d moves on slice back (%d left to pair)" %
-                    (post_slice_forward_non_paired_wings_count - post_slice_back_non_paired_wings_count,
-                    post_slice_back_solution_len - post_slice_forward_solution_len,
-                    post_slice_back_non_paired_wings_count))
-
-        if min_solution_len:
-            self.state = min_solution_state
-            self.solution = min_solution
-            return True
-        else:
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            return False
-
-    def pair_four_edges_444(self, edge):
-
-        # save cube state
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-        original_non_paired_wings_count = self.get_non_paired_wings_count()
-        original_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        if original_non_paired_wings_count < 4:
-            raise SolveError("pair_four_edges_444() requires at least 4 unpaired edges")
-
-        self.rotate_edge_to_F_west(edge)
-
-        # Work with the wing at the bottom of the F-west edge
-        target_wing = self.sideF.edge_west_pos[-1]
-
-        # Move the sister wing to F east
-        sister_wing = self.get_wings(target_wing)[0]
-        steps = lookup_table_444_sister_wing_to_F_east[sister_wing]
-
-        for step in steps.split():
-            self.rotate(step)
-
-        self.rotate("Uw")
-
-        if not self.sideR.west_edge_paired():
-            pass
-        elif not self.sideB.west_edge_paired():
-            self.rotate_y()
-        elif not self.sideL.west_edge_paired():
-            self.rotate_y()
-            self.rotate_y()
-
-        if not self.prep_for_slice_back_444():
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            return False
-
-        self.rotate("Uw'")
-
-        current_non_paired_wings_count = self.get_non_paired_wings_count()
-        current_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        log.info("pair_four_edges_444()    paired %d wings in %d moves (%d left to pair)" %
-            (original_non_paired_wings_count - current_non_paired_wings_count,
-             current_solution_len - original_solution_len,
-             current_non_paired_wings_count))
-
-        if current_non_paired_wings_count >= original_non_paired_wings_count:
-            raise SolveError("Went from %d to %d non_paired_edges" %
-                (original_non_paired_wings_count, current_non_paired_wings_count))
-
-        return True
-
-    def pair_two_edges_444(self, edge):
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-        original_non_paired_wings_count = self.get_non_paired_wings_count()
-        original_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        if original_non_paired_wings_count == 2:
-            raise SolveError("pair_last_two_edges_444() should be used when there are only 2 edges left")
-
-        self.rotate_edge_to_F_west(edge)
-
-        # Work with the wing at the bottom of the F-west edge
-        target_wing = self.sideF.edge_west_pos[-1]
-
-        # Move the sister wing to F east...this uses a small lookup table
-        # that I built manually. This puts the sister wing at F-east in the correct
-        # orientation (it will not need to be flipped). We used to just move the
-        # sister wing to F-east but then sometimes we would need to "R U' B' R2"
-        # to flip it around.
-        sister_wing = self.get_wings(target_wing)[0]
         '''
-        if sister_wing not in lookup_table_444_sister_wing_to_F_east:
-            log.warning("lookup_table_444_sister_wing_to_F_east needs %s" % pformat(sister_wing))
-            self.find_moves_to_reach_state(sister_wing, 'F-east')
-            raise ImplementThis("lookup_table_444_sister_wing_to_F_east needs %s" % pformat(sister_wing))
+        Experiment to try solving all centers without staging...the IDA search takes
+        way too long and the tables required are huge. For my main test cube it found
+        a centers solution of 18 steps but took about 6m to do so.  My normal centers
+        solver where I stage first, then solve, takes a few seconds and finds a solution
+        21 steps long.
+
+        # test the prune tables
+        #self.lt_UD_centers_solve_unstaged.solve()
+        #self.lt_LR_centers_solve_unstaged.solve()
+        #self.lt_FB_centers_solve_unstaged.solve()
+        #self.print_cube()
+        #sys.exit(0)
+
+        log.info("%s: Start of Phase1" % self)
+        self.lt_ULFRBD_centers_solve_unstaged.solve()
+        self.print_cube()
+        log.info("%s: End of Phase1, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
+        return
         '''
-        steps = lookup_table_444_sister_wing_to_F_east[sister_wing]
 
-        for step in steps.split():
-            self.rotate(step)
-
-        # Now that that two edges on F are in place, put an unpaired edge at U-west.
-        # The unpaired edge that we place at U-west should contain the
-        # sister wing of the wing that is at the bottom of F-east. This
-        # will allow us to pair two wings at once.
-        wing_bottom_F_east = self.sideF.edge_east_pos[-1]
-        sister_wing_bottom_F_east = self.get_wings(wing_bottom_F_east)[0]
-
-        if sister_wing_bottom_F_east not in lookup_table_444_sister_wing_to_U_west:
-            raise ImplementThis("sister_wing_bottom_F_east %s" % pformat(sister_wing_bottom_F_east))
-
-        steps = lookup_table_444_sister_wing_to_U_west[sister_wing_bottom_F_east]
-
-        # If steps is None it means sister_wing_bottom_F_east is at (37, 24)
-        # which is the top wing on F-west. If that is the case call
-        # pair_last_two_edges_444()
-        if steps == None:
-            self.state = original_state[:]
-            self.solution = original_solution[:]
-            #self.print_cube()
-            self.pair_last_two_edges_444(edge)
-        else:
-            for step in steps.split():
-                self.rotate(step)
-
-            for step in ("Uw", "L'", "U'", "L", "Uw'"):
-                self.rotate(step)
-
-        current_non_paired_wings_count = self.get_non_paired_wings_count()
-        current_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        log.info("pair_two_edges_444()    paired %d wings in %d moves (%d left to pair)" %
-            (original_non_paired_wings_count - current_non_paired_wings_count,
-             current_solution_len - original_solution_len,
-             current_non_paired_wings_count))
-
-        if current_non_paired_wings_count < original_non_paired_wings_count:
-            return True
-
-        raise SolveError("Went from %d to %d non_paired_edges" %
-            (original_non_paired_wings_count, current_non_paired_wings_count))
-
-    def pair_last_two_edges_444(self, edge):
-        """
-        At one point I looked into using two lookup tables to do this:
-        - the first to stage edges to F-west and F-east
-        - the second to solve the two staged edges
-
-        The first stage took 1 or steps and the 2nd stage took either 7 or 10, it
-        was 10 if the wing at F-east was turned the wrong way and needed to be
-        rotated around. It wasn't worth it...what I have below works just fine and
-        takes between 7 to 11 steps total.
-        """
-        original_solution_len = self.get_solution_len_minus_rotates(self.solution)
-        original_non_paired_wings_count = self.get_non_paired_wings_count()
-
-        # rotate unpaired edge to F-west
-        self.rotate_edge_to_F_west(edge)
-
-        pos1 = self.sideF.edge_west_pos[-1]
-
-        # Put the other unpaired edge on F east...this uses a small lookup table
-        # that I built manually. This puts the sister wing at F-east in the correct
-        # orientation (it will not need to be flipped). We used to just move the
-        # sister wing to F-east but then sometimes we would need to "R F' U R' F"
-        # to flip it around.
-        sister_wing = self.get_wings(pos1)[0]
-
-        steps = lookup_table_444_last_two_edges_place_F_east[sister_wing]
-        for step in steps.split():
-            self.rotate(step)
-
-        # "Solving the last 4 edge blocks" in
-        # http://www.rubiksplace.com/cubes/4x4/
-        for step in ("Dw", "R", "F'", "U", "R'", "F", "Dw'"):
-            self.rotate(step)
-
-        current_non_paired_wings_count = self.get_non_paired_wings_count()
-        current_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        log.info("pair_last_two_edges_444() paired %d wings in %d moves (%d left to pair)" %
-            (original_non_paired_wings_count - current_non_paired_wings_count,
-             current_solution_len - original_solution_len,
-             current_non_paired_wings_count))
-
-        if original_non_paired_wings_count == 2:
-            if current_non_paired_wings_count:
-                raise SolveError("Failed to pair last two edges")
-
-    def pair_edge(self, edge_to_pair):
-        """
-        Pair a specific edge
-        """
-        pre_solution_len = self.get_solution_len_minus_rotates(self.solution)
-        pre_non_paired_edges_count = self.get_non_paired_edges_count()
-        log.info("pair_edge() for %s (%d wings left to pair)" % (pformat(edge_to_pair), pre_non_paired_edges_count))
-
-        if pre_non_paired_edges_count > 6:
-            if not self.pair_six_edges_444(edge_to_pair[0]):
-                log.info("pair_six_edges_444()    returned False")
-
-                if not self.pair_four_edges_444(edge_to_pair[0]):
-                    log.info("pair_four_edges_444() returned False")
-                    self.pair_two_edges_444(edge_to_pair[0])
-
-        elif pre_non_paired_edges_count == 6:
-            if not self.pair_last_six_edges_444():
-                log.info("pair_last_six_edges_444() returned False")
-
-                if not self.pair_four_edges_444(edge_to_pair[0]):
-                    log.info("pair_four_edges_444() returned False")
-                    self.pair_two_edges_444(edge_to_pair[0])
-
-        elif pre_non_paired_edges_count >= 4:
-            if not self.pair_four_edges_444(edge_to_pair[0]):
-                log.info("pair_four_edges_444() returned False")
-                self.pair_two_edges_444(edge_to_pair[0])
-
-        elif pre_non_paired_edges_count == 2:
-            self.pair_last_two_edges_444(edge_to_pair[0])
-
-        # The scenario where you have 3 unpaired edges
-        elif pre_non_paired_edges_count > 2:
-            self.pair_two_edges_444(edge_to_pair[0])
-
-        post_non_paired_edges_count = self.get_non_paired_edges_count()
-        edges_paired = pre_non_paired_edges_count - post_non_paired_edges_count
-
-        if edges_paired < 1:
-            raise SolveError("Paired %d edges" % edges_paired)
-
-        return True
-
-    def group_edges_recursive(self, depth, edge_to_pair):
-        """
-        """
-        pre_non_paired_wings_count = len(self.get_non_paired_wings())
-        pre_non_paired_edges_count = len(self.get_non_paired_edges())
-        edge_solution_len = self.get_solution_len_minus_rotates(self.solution) - self.center_solution_len
-
+        log.info("%s: Start of Phase1" % self)
+        self.lt_ULFRBD_centers_stage.avoid_oll = True
+        #self.lt_ULFRBD_centers_stage.ida_all_the_way = True
+        self.lt_ULFRBD_centers_stage.solve()
+        self.print_cube()
+        log.info("%s: End of Phase1, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
         log.info("")
-        log.info("group_edges_recursive(%d) called with edge_to_pair %s (%d edges and %d wings left to pair, min solution len %s, current solution len %d)" %
-                (depth,
-                 pformat(edge_to_pair),
-                 pre_non_paired_edges_count,
-                 pre_non_paired_wings_count,
-                 self.min_edge_solution_len,
-                 edge_solution_len))
 
-        # Should we continue down this branch or should we prune it? An estimate
-        # of 2 moves to pair an edge is a low estimate so if the current number of
-        # steps plus 2 * pre_non_paired_wings_count is greater than our current minimum
-        # there isn't any point in continuing down this branch so prune it and save
-        # some CPU cycles.
-        estimate_per_wing = 1.6
+        log.info("%s: Start of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
+        self.lt_ULFRBD_centers_solve.solve()
+        #self.lt_ULFRBD_centers_solve_edges_stage.solve()
+        self.print_cube()
+        log.info("%s: End of Phase2, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
+        log.info("")
 
-        estimated_solution_len = edge_solution_len + (estimate_per_wing * pre_non_paired_wings_count)
+    def solve_all_edges_444(self, use_bfs, apply_steps_if_found):
 
-        if estimated_solution_len >= self.min_edge_solution_len:
-            #log.warning("PRUNE: %s + (2 * %d) > %s" % (edge_solution_len, non_paired_wings_count, self.min_edge_solution_len))
-            return False
+        # Remember what things looked like
+        original_state = self.state[:]
+        original_solution = self.solution[:]
+
+        outer_layer_moves = (
+            "U", "U'", "U2",
+            "L", "L'", "L2",
+            "F", "F'", "F2",
+            "R", "R'", "R2",
+            "B", "B'", "B2",
+            "D", "D'", "D2",
+        )
+        pre_steps_to_try = []
+        pre_steps_to_try.append([])
+
+        if use_bfs:
+            for step in outer_layer_moves:
+                pre_steps_to_try.append([step,])
+
+            for step1 in outer_layer_moves:
+                for step2 in outer_layer_moves:
+                    if not steps_on_same_face_and_layer(step1, step2):
+                        pre_steps_to_try.append([step1, step2])
+
+            for step1 in outer_layer_moves:
+                for step2 in outer_layer_moves:
+                    if not steps_on_same_face_and_layer(step1, step2):
+
+                        for step3 in outer_layer_moves:
+                            if not steps_on_same_face_and_layer(step2, step3):
+                                pre_steps_to_try.append([step1, step2, step3])
+
+            '''
+            for step1 in outer_layer_moves:
+                for step2 in outer_layer_moves:
+                    if not steps_on_same_face_and_layer(step1, step2):
+                        for step3 in outer_layer_moves:
+                            if not steps_on_same_face_and_layer(step2, step3):
+                                for step4 in outer_layer_moves:
+                                    if not steps_on_same_face_and_layer(step3, step4):
+                                        pre_steps_to_try.append([step1, step2, step3, step4])
+
+            '''
+            log.warning("%d pre_steps_to_try" % len(pre_steps_to_try))
+
+        for pre_steps in pre_steps_to_try:
+            #log.info("solve_all_edges_444 trying pre_steps %s" % ' '.join(pre_steps))
+
+            self.state = original_state[:]
+            self.solution = original_solution[:]
+
+            for step in pre_steps:
+                self.rotate(step)
+
+            state = edges_recolor_pattern_444(self.state[:])
+
+            edges_state = ''.join([state[square_index] for square_index in wings_444])
+            signature = get_edges_paired_binary_signature(edges_state)
+            signature_width = len(signature) + 1
+            edges_state = signature + '_' + edges_state
+
+
+            # If our state is in lookup-table-4x4x4-step100-edges.txt then execute
+            # those steps and we are done
+            steps = self.lt_edges.steps(edges_state)
+
+            if steps is not None:
+
+                if apply_steps_if_found:
+                    for step in steps:
+                        self.rotate(step)
+                else:
+                    self.state = original_state[:]
+                    self.solution = original_solution[:]
+
+                return True
+
+        self.state = original_state[:]
+        self.solution = original_solution[:]
+
+        return False
+
+    def solve_edges_six_then_six(self):
+
+        if self.edges_paired():
+            return True
 
         state = edges_recolor_pattern_444(self.state[:])
+
         edges_state = ''.join([state[square_index] for square_index in wings_444])
         signature = get_edges_paired_binary_signature(edges_state)
         signature_width = len(signature) + 1
         edges_state = signature + '_' + edges_state
 
+        # If our state is in lookup-table-4x4x4-step100-edges.txt then execute
+        # those steps and we are done
         steps = self.lt_edges.steps(edges_state)
 
         if steps is not None:
             for step in steps:
                 self.rotate(step)
+                return True
 
-        # The only time this will be None is on the initial call to group_edges_recursive()
-        elif edge_to_pair:
-            self.pair_edge(edge_to_pair)
+        # If we are here then we need to look through lookup-table-4x4x4-step100-edges.txt
+        # to find the line whose state is the closest match to our own. This allows us to
+        # pair some of our unpaired edges and make some progress even though our current
+        # state isn't in the lookup table.
+        MAX_WING_PAIRS = 12
+        MAX_EDGES = 12
 
-        non_paired_edges = self.get_non_paired_edges()
+        # It takes 12 steps to solve PLL
+        PLL_PENALTY = 12
 
-        if non_paired_edges:
-            original_state = self.state[:]
-            original_solution = self.solution[:]
+        STATE_TARGET = '111111111111_10425376a8b9ecfdhgkiljnm'
 
-            # call group_edges_recursive() for each non-paired edge
-            for edge in non_paired_edges:
-                self.group_edges_recursive(depth+1, edge)
+        original_state = self.state[:]
+        original_solution = self.solution[:]
+        loop_count = 0
+
+        while not self.edges_paired():
+
+            # How many edges are paired?
+            pre_non_paired_edges_count = self.get_non_paired_edges_count()
+            pre_paired_edges_count = MAX_WING_PAIRS - pre_non_paired_edges_count
+
+            state = edges_recolor_pattern_444(self.state[:])
+
+            edges_state = ''.join([state[square_index] for square_index in wings_444])
+            signature = get_edges_paired_binary_signature(edges_state)
+            signature_width = len(signature) + 1
+            edges_state = signature + '_' + edges_state
+
+            log.info("solve_edges_six_then_six loop %d: signature %s" % (loop_count, signature))
+
+            # Find all of the 'loose' matching entries in our lookup table. 'loose' means the
+            # entry will not unpair any of our already paired wings.
+            loose_matching_entry = []
+            max_wing_pair_count = None
+
+            # This runs much faster (than find_edge_entries_with_loose_signature) because
+            # it is only looking over the signatures that are an exact match instead of a
+            # loose match. It produces slightly longer solutions but in about 1/6 the time.
+            log.debug("%s: find_edge_entries_with_signature start" % self)
+            lines_to_examine = self.lt_edges.find_edge_entries_with_signature(signature)
+            log.debug("%s: find_edge_entries_with_signature end (found %d)" % (self, len(lines_to_examine)))
+
+            for line in lines_to_examine:
+                (phase1_state, phase1_steps) = line.split(':')
+
+                common_count = get_characters_common_count(edges_state,
+                                                           phase1_state,
+                                                           signature_width)
+                wing_pair_count = int(common_count/2)
+
+                # Only bother with this entry if it will pair more wings than are currently paired
+                if wing_pair_count > pre_paired_edges_count:
+
+                    if max_wing_pair_count is None:
+                        loose_matching_entry.append((wing_pair_count, line))
+                        max_wing_pair_count = wing_pair_count
+
+                    elif wing_pair_count > max_wing_pair_count:
+                        #loose_matching_entry = []
+                        loose_matching_entry.append((wing_pair_count, line))
+                        max_wing_pair_count = wing_pair_count
+
+                    elif wing_pair_count == max_wing_pair_count or wing_pair_count >= 4:
+                        loose_matching_entry.append((wing_pair_count, line))
+
+            #log.warning("pre_paired_edges_count %d, loose_matching_entry %d" % (pre_paired_edges_count, len(loose_matching_entry)))
+            #log.warning("pre_paired_edges_count %d, loose_matching_entry(%d):\n%s\n" %
+            #    (pre_paired_edges_count, len(loose_matching_entry), pformat(loose_matching_entry)))
+            best_score_states = []
+
+            # Now run through each state:steps in loose_matching_entry
+            for (wing_pair_count, line) in loose_matching_entry:
                 self.state = original_state[:]
                 self.solution = original_solution[:]
 
-            return False
+                (phase1_edges_state_fake, phase1_steps) = line.split(':')
+                phase1_steps = phase1_steps.split()
 
-        else:
-
-            # If you solve 3x3x3 and then resolve PLL it takes 12 steps but if we avoid it here
-            # it only takes 7 steps. If we are pairing the outside edges of a 5x5x5 self.avoid_pll
-            # will be False.
-            if self.avoid_pll and self.edge_solution_leads_to_pll_parity():
-                for step in "Rw2 U2 F2 Rw2 F2 U2 Rw2".split():
+                # Apply the phase1 steps
+                for step in phase1_steps:
                     self.rotate(step)
 
-            # There are no edges left to pair, note how many steps it took pair them all
-            edge_solution_len = self.get_solution_len_minus_rotates(self.solution) - self.center_solution_len
+                phase1_state = edges_recolor_pattern_444(self.state[:])
+                phase1_edges_state = ''.join([phase1_state[square_index] for square_index in wings_444])
+                phase1_signature = get_edges_paired_binary_signature(phase1_edges_state)
+                phase1_edges_state = phase1_signature + '_' + phase1_edges_state
 
-            # Remember the solution that pairs all edges in the least number of moves
-            if edge_solution_len < self.min_edge_solution_len:
-                self.min_edge_solution_len = edge_solution_len
-                self.min_edge_solution = self.solution[:]
-                self.min_edge_solution_state = self.state[:]
-                log.warning("NEW MIN: edges paired in %d steps" % self.min_edge_solution_len)
+                # If that got us to our state_target then phase1 alone paired all
+                # of the edges...this is unlikely
+                if phase1_edges_state == STATE_TARGET:
+                    if self.edge_solution_leads_to_pll_parity():
+                        #best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps) + PLL_PENALTY, phase1_steps[:]))
+                        pass
+                    else:
+                        best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase1_steps), phase1_steps[:]))
 
-            return True
+                else:
+                    # phase1_steps did not pair all edges so do another lookup and execute those steps
+                    phase2_steps = self.lt_edges.steps(phase1_edges_state)
 
-    def stage_first_four_edges_444(self):
-        """
-        There are 495 different permutations of 4-edges out of 12-edges, use the one
-        that gives us the shortest solution for getting 4-edges staged to LB, LF, RF, RB
-        """
-        min_solution_len = None
-        min_solution_steps = None
-        min_solution_wing_strs = None
+                    if phase2_steps is not None:
+                        for step in phase2_steps:
+                            self.rotate(step)
 
-        for wing_strs in stage_first_four_edges_wing_str_combos:
-            state = self.lt_edges_stage_first_four.state(wing_strs)
-            steps = self.lt_edges_stage_first_four.steps(state)
+                        phase2_state = edges_recolor_pattern_444(self.state[:])
+                        phase2_edges_state = ''.join([phase2_state[square_index] for square_index in wings_444])
+                        phase2_signature = get_edges_paired_binary_signature(phase2_edges_state)
+                        phase2_edges_state = phase2_signature + '_' + phase2_edges_state
+                        phase12_steps = phase1_steps + phase2_steps
 
-            if steps:
-                log.info("%s: first four %s can be staged in %d steps" % (self, wing_strs, len(steps)))
+                        if phase2_edges_state == STATE_TARGET:
 
-                if min_solution_len is None or len(steps) < min_solution_len:
-                    min_solution_len = len(steps)
-                    min_solution_steps = steps[:]
-                    min_solution_wing_strs = wing_strs
+                            if self.edge_solution_leads_to_pll_parity():
+                                #best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase12_steps) + PLL_PENALTY, phase12_steps[:]))
+                                pass
+                            else:
+                                best_score_states.append((MAX_EDGES, MAX_WING_PAIRS, len(phase12_steps), phase12_steps[:]))
+                        else:
+                            post_non_paired_edges_count = self.get_non_paired_edges_count()
+                            paired_edges_count = MAX_WING_PAIRS - post_non_paired_edges_count
 
-        if min_solution_len is None:
-            raise SolveError("Could not find 4-edges to stage")
-        else:
-            self.stage_first_four_wing_strs = min_solution_wing_strs
+                            best_score_states.append((paired_edges_count, paired_edges_count, len(phase12_steps), phase12_steps[:]))
+                    else:
+                        post_non_paired_edges_count = self.get_non_paired_edges_count()
+                        paired_edges_count = MAX_WING_PAIRS - post_non_paired_edges_count
 
-            for step in min_solution_steps:
-                self.rotate(step)
+                        best_score_states.append((paired_edges_count, paired_edges_count, len(phase1_steps), phase1_steps[:]))
 
-    def stage_second_four_edges_444(self):
-        """
-        The first four edges have been staged to LB, LF, RF, RB. Stage the next four
-        edges to UB, UF, DF, DB (this in turn stages the final four edges).
+                #log.info("HERE 10 %s: %s, %s, phase1_edges_state %s, phase2 steps %s" %
+                #    (self, wing_pair_count, line, phase1_edges_state, pformat(phase2_steps)))
 
-        Since there are 8-edges there are 70 different combinations of edges we can
-        choose to stage to UB, UF, DF, DB. Walk through all 70 combinations and see
-        which one leads to the shortest solution.  This accounts for the number of
-        steps that will be needed in solve_staged_edges_444().
-        """
-
-        # Remember what things looked like
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-
-        wing_strs_for_second_four = []
-
-        for wing_str in wing_strs_all:
-            if wing_str not in self.stage_first_four_wing_strs:
-                wing_strs_for_second_four.append(wing_str)
-
-        min_solution_len = None
-        min_solution_steps = None
-
-        for wing_strs in itertools.combinations(wing_strs_for_second_four, 4):
-            state = self.lt_edges_stage_second_four.state(wing_strs)
-            steps = self.lt_edges_stage_second_four.steps(state)
-
-            if steps:
-                log.info("%s: second four %s can be staged in %d steps" % (self, wing_strs, len(steps)))
-
-                for step in steps:
-                    self.rotate(step)
-
-                # dwalton uncomment once this is working
-                self.solve_staged_edges_444(False)
-                solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-                if min_solution_len is None or solution_len < min_solution_len:
-                    min_solution_len = solution_len
-                    min_solution_steps = steps[:]
-                    log.info("NEW MIN: %s steps" % solution_len)
-
-                self.state = original_state[:]
-                self.solution = original_solution[:]
-
-        if min_solution_len is None:
-            raise SolveError("Could not find 4-edges to stage")
-        else:
-            for step in min_solution_steps:
-                self.rotate(step)
-
-    def solve_staged_edges_444(self, log_msgs):
-        """
-        All edges are staged so that we can use the L4E table on each.  The order
-        that the edges are solved in can make a small difference in move count.
-
-        We only need to rotate the cube around a few ways (opening rotation), solve
-        all three planes of edges and see which opening rotation results in the
-        lowest move count.
-        """
-
-        # Remember what things looked like
-        original_state = self.state[:]
-        original_solution = self.solution[:]
-
-        min_solution_len = None
-        min_solution_steps = None
-
-        for steps in rotations_24:
-
-            for step in steps:
-                self.rotate(step)
-
-            self.lt_edges_pair_last_four.solve()
-
-            self.rotate("x")
-            self.lt_edges_pair_last_four.solve()
-
-            self.rotate("x")
-            self.lt_edges_pair_last_four.solve()
-            solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-            if min_solution_len is None or solution_len < min_solution_len:
-                min_solution_len = solution_len
-                min_solution_steps = steps[:]
+            #log.info("best_score_states:\n%s" % pformat(best_score_states))
+            best_entry = get_best_entry(best_score_states)
+            #log.info("best_entry: %s" % pformat(best_entry))
 
             self.state = original_state[:]
             self.solution = original_solution[:]
 
-        for step in min_solution_steps:
-            self.rotate(step)
+            for step in best_entry[3]:
+                self.rotate(step)
 
-        self.lt_edges_pair_last_four.solve()
+            original_state = self.state[:]
+            original_solution = self.solution[:]
 
-        if log_msgs:
-            self.print_cube()
-            log.info("%s: first four edges paired, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-
-
-        self.rotate("x")
-        self.lt_edges_pair_last_four.solve()
-
-        if log_msgs:
-            #self.print_cube()
-            log.info("%s: second four edges paired, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-
-        self.rotate("x")
-        self.lt_edges_pair_last_four.solve()
-
-        if log_msgs:
-            #self.print_cube()
-            log.info("%s: all edges paired, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
+            log.info("solve_edges_six_then_six loop %d: went from %d edges to %d edges in %d moves" %
+                (loop_count, pre_paired_edges_count, best_entry[0], len(best_entry[3])))
+            loop_count += 1
 
     def group_edges(self):
 
@@ -2617,48 +1046,9 @@ class RubiksCube444(RubiksCube):
 
         self.lt_init()
 
-        # The future
-        '''
-        self.stage_first_four_edges_444()
-        self.print_cube()
-        log.info("%s: first four edges staged, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-
-        self.stage_second_four_edges_444()
-        self.print_cube()
-        log.info("%s: all edges staged, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-        self.solve_staged_edges_444(True)
-        # dwalton
-        self.print_cube()
-        log.info("%s: all edges paired, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
-        sys.exit(0)
-        '''
-
-        #'''
-        self.center_solution_len = self.get_solution_len_minus_rotates(self.solution)
-
-        use_recursive = True
-        #use_recursive = False
-
-        # group_edges_recursive() is where the magic happens
-        if use_recursive:
-            depth = 0
-            self.min_edge_solution_len = 9999
-            self.min_edge_solution = None
-            self.min_edge_solution_state = None
-            self.group_edges_recursive(depth, None)
-
-            self.state = self.min_edge_solution_state[:]
-            self.solution = self.min_edge_solution[:]
-
-        else:
-            while True:
-
-                # If all edges are paired break out of the loop
-                if self.edges_paired():
-                    break
-
-                self.lt_edges.solve()
-        #'''
+        # use_bfs needs more testing...I'm not sure it buys us much
+        if not self.solve_all_edges_444(use_bfs=False, apply_steps_if_found=True):
+            self.solve_edges_six_then_six()
 
         log.info("%s: edges paired, %d steps in" % (self, self.get_solution_len_minus_rotates(self.solution)))
         self.solution.append('EDGES_GROUPED')
